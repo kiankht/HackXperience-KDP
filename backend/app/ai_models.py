@@ -61,3 +61,9 @@ class AISubmissionValidation(BaseModel):
         if not self.complete:
             self.should_unlock_dependents = False
         return self
+
+
+class AIProjectChatResponse(BaseModel):
+    in_scope: bool
+    answer: str
+    suggested_questions: list[str] = Field(default_factory=list, max_length=4)

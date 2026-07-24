@@ -7,6 +7,7 @@ from .ai_models import (
     AIAssignmentAnalysis,
     AISubmissionValidation,
     AIWorkflowDefinition,
+    AIProjectChatResponse,
 )
 from .analysis import analyze_assignment
 from .config import Settings
@@ -16,6 +17,7 @@ from .models import (
     AssignmentSourceSummary,
     ConfirmedProjectRequest,
     Project,
+    Submission,
     Task,
 )
 from .project_builder import build_project, build_project_from_ai
@@ -23,6 +25,7 @@ from .prompts import (
     ASSIGNMENT_ANALYSIS_PROMPT,
     SUBMISSION_VALIDATION_PROMPT,
     WORKFLOW_GENERATION_PROMPT,
+    PROJECT_CHAT_PROMPT,
 )
 from .workflow import ValidationResult, validate_submission
 
@@ -267,3 +270,163 @@ class AIService:
                 ),
                 "fallback",
             )
+
+    def chat_about_project(
+        self,
+        *,
+        project: Project,
+        submissions: dict[str, Submission],
+        question: str,
+        history: list[dict[str, str]] | None = None,
+    ) -> tuple[AIProjectChatResponse, str]:
+        history = history or []
+        lowered = question.casefold()
+        scope_words = {
+            "relay", "assignment", "task", "workflow", "rubric", "deadline",
+            "submission", "member", "progress", "requirement", "deliverable",
+            "project", "next", "work", "answer", "combine", "report",
+            "presentation", "research", "dependency", "status",
+        }
+        project_words = {
+            word.casefold().strip(".,:;!?()")
+            for text in [project.title, *project.deliverables, *project.requirements,
+                         *(task.title for task in project.tasks)]
+            for word in text.split()
+            if len(word) >= 4
+        }
+        in_scope = any(word in lowered for word in scope_words | project_words)
+        available_titles = [
+            task.title for task in project.tasks if task.status.value == "available"
+        ]
+        suggestions = [
+            "What should I work on next?",
+            "How much of this assignment is complete?",
+            "Which rubric criteria should we focus on?",
+        ]
+        if available_titles:
+            suggestions[0] = f"How do I start “{available_titles[0]}”?"
+        refusal = AIProjectChatResponse(
+            in_scope=False,
+            answer=(
+                f"I can connect that back to “{project.title}” instead. "
+                "Try one of these project-focused questions:"
+            ),
+            suggested_questions=suggestions,
+        )
+        repeated = any(
+            item.get("role") == "user"
+            and item.get("content", "").casefold().strip() == lowered.strip()
+            for item in history
+        )
+        if not in_scope:
+            if repeated:
+                refusal.answer = (
+                    "It looks like that question still is not getting you unstuck. "
+                    f"Let’s bring it back to “{project.title}” with one small next step."
+                )
+            return refusal, "scope-filter"
+
+        completed = [task for task in project.tasks if task.status.value == "completed"]
+        available = [task for task in project.tasks if task.status.value == "available"]
+        active = [
+            task for task in project.tasks
+            if task.status.value in {"in_progress", "needs_revision"}
+        ]
+        if not self._require_or_fallback():
+            if "rubric" in lowered:
+                answer = "Rubric coverage:\n" + "\n".join(
+                    f"- {item.criterion}: {item.marks} marks — {item.description}"
+                    for item in project.rubric
+                )
+            elif any(word in lowered for word in ("progress", "status", "finished", "complete")):
+                answer = (
+                    f"{len(completed)} of {len(project.tasks)} tasks are complete. "
+                    f"{len(active)} are in progress and {len(available)} are available."
+                )
+            elif any(word in lowered for word in ("next", "available", "start")):
+                answer = "Ready work:\n" + (
+                    "\n".join(f"- {task.title}: {task.first_action}" for task in available)
+                    or "No unclaimed task is currently ready. Check the workflow for blockers."
+                )
+            elif "deadline" in lowered:
+                answer = (
+                    f"The assignment deadline is {project.deadline}."
+                    if project.deadline else "No deadline is currently set for this assignment."
+                )
+            elif any(word in lowered for word in ("member", "team", "owner")):
+                answer = "Project members: " + (
+                    ", ".join(member.name for member in project.members)
+                    or "No members have joined yet."
+                )
+            else:
+                matching = [
+                    task for task in project.tasks
+                    if any(word in lowered for word in task.title.casefold().split() if len(word) > 3)
+                ]
+                if matching:
+                    task = matching[0]
+                    answer = (
+                        f"{task.title}: {task.objective}\n"
+                        f"Start with: {task.first_action}\n"
+                        f"Required output: {', '.join(task.required_output)}"
+                    )
+                else:
+                    answer = (
+                        f"This Relay project is “{project.title}”. It has "
+                        f"{len(project.tasks)} tasks and {len(completed)} are complete. "
+                        "Ask me about a task, the rubric, progress, or what to do next."
+                    )
+            if repeated:
+                first_ready = available[0] if available else None
+                answer = (
+                    "You asked this again, so let’s make it more concrete. "
+                    + (
+                        f"Open “{first_ready.title}” and do only this first: "
+                        f"{first_ready.first_action}"
+                        if first_ready
+                        else "Open Workflow, identify the first waiting task, and check which dependency blocks it."
+                    )
+                )
+            elif history:
+                answer += "\n\nA useful next move is to choose one suggestion below and narrow the question."
+            return AIProjectChatResponse(
+                in_scope=True,
+                answer=answer,
+                suggested_questions=suggestions,
+            ), "fallback"
+
+        context = {
+            "project": project.model_dump(mode="json"),
+            "accepted_submissions": [
+                {
+                    "task_id": submission.task_id,
+                    "content": submission.content[:4_000],
+                }
+                for submission in submissions.values()
+                if submission.validation_status == "complete"
+                and any(
+                    task.id == submission.task_id for task in project.tasks
+                )
+            ],
+            "question": question,
+            "conversation_history": history[-12:],
+        }
+        try:
+            response: AIProjectChatResponse = self._parse(
+                instructions=PROJECT_CHAT_PROMPT,
+                content=json.dumps(context, ensure_ascii=False),
+                schema=AIProjectChatResponse,
+            )
+            if not response.in_scope:
+                return refusal, "ai"
+            if not response.suggested_questions:
+                response.suggested_questions = suggestions
+            return response, "ai"
+        except Exception as error:
+            if self.settings.ai_mode == "real":
+                raise AIServiceError("RelyRelay.ai could not answer right now.") from error
+            return AIProjectChatResponse(
+                in_scope=True,
+                answer="AI chat is temporarily unavailable. Try asking about progress, the rubric, or ready tasks.",
+                suggested_questions=suggestions,
+            ), "fallback"

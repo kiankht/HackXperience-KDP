@@ -9,6 +9,7 @@ from .models import (
     ClaimTaskRequest,
     ConfirmedProjectRequest,
     JoinProjectRequest,
+    ProjectChatRequest,
     SubmitTaskRequest,
     TaskStatus,
 )
@@ -152,7 +153,7 @@ def create_project_from_analysis(
 
 @app.post("/api/demo/reset")
 def reset_demo() -> dict[str, object]:
-    project = store.reset_demo()
+    project = store.reset_demo(preserve_other_projects=True)
     validate_dependency_references(project)
     schedule_project_tasks(project, settings.auto_claim_seconds)
     return {
@@ -179,13 +180,42 @@ def get_project(project_id: str) -> dict[str, object]:
     }
 
 
-@app.get("/api/projects/{project_id}/combined-result")
-def get_combined_project_result(project_id: str) -> dict[str, object]:
-    try:
-        project = store.get_project(project_id)
-    except KeyError as error:
-        raise HTTPException(status_code=404, detail=str(error.args[0])) from error
-    return build_combined_result(project, store.submissions)
+@app.get("/api/projects")
+def get_project_statistics() -> list[dict[str, object]]:
+    results: list[dict[str, object]] = []
+    for project in store.projects.values():
+        completed = sum(task.status == TaskStatus.COMPLETED for task in project.tasks)
+        in_progress = sum(
+            task.status in {TaskStatus.IN_PROGRESS, TaskStatus.NEEDS_REVISION}
+            for task in project.tasks
+        )
+        accepted_characters = sum(
+            len(submission.content)
+            for task in project.tasks
+            if (submission := store.completed_submission_for(task)) is not None
+        )
+        total = len(project.tasks)
+        results.append({
+            "project_id": project.id,
+            "title": project.title,
+            "deadline": project.deadline,
+            "is_complete": bool(total) and completed == total,
+            "progress_percent": round(completed / total * 100) if total else 0,
+            "completed_tasks": completed,
+            "in_progress_tasks": in_progress,
+            "available_tasks": sum(
+                task.status == TaskStatus.AVAILABLE for task in project.tasks
+            ),
+            "waiting_tasks": sum(
+                task.status == TaskStatus.WAITING for task in project.tasks
+            ),
+            "total_tasks": total,
+            "member_count": len(project.members),
+            "members": [member.name for member in project.members],
+            "accepted_answer_characters": accepted_characters,
+            "estimated_minutes": sum(task.estimated_minutes for task in project.tasks),
+        })
+    return results
 
 
 @app.get("/api/projects/{project_id}/combined-result")
@@ -195,6 +225,26 @@ def get_combined_project_result(project_id: str) -> dict[str, object]:
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error.args[0])) from error
     return build_combined_result(project, store.submissions)
+
+
+@app.post("/api/projects/{project_id}/chat")
+def chat_about_project(
+    project_id: str,
+    payload: ProjectChatRequest,
+) -> dict[str, object]:
+    try:
+        project = store.get_project(project_id)
+        response, mode = ai_service.chat_about_project(
+            project=project,
+            submissions=store.submissions,
+            question=payload.question,
+            history=[item.model_dump() for item in payload.history],
+        )
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error.args[0])) from error
+    except (AIConfigurationError, AIServiceError) as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return {**response.model_dump(), "mode": mode}
 
 
 @app.post("/api/projects/{project_id}/members", status_code=status.HTTP_201_CREATED)

@@ -27,5 +27,30 @@
     </main>
 
     <div id="global-message" class="global-message" role="status" aria-live="polite" hidden></div>
+    <button id="ai-chat-launcher" class="ai-chat-launcher" aria-controls="ai-chat-panel" aria-expanded="false" hidden>
+      <span aria-hidden="true">R</span> Ask Relay AI
+    </button>
+    <aside id="ai-chat-panel" class="ai-chat-panel" aria-labelledby="ai-chat-title" hidden>
+      <button id="ai-chat-resize" class="ai-chat-resize" type="button" aria-label="Resize chat panel" title="Drag to resize"></button>
+      <header>
+        <div><span class="ai-chat-mark" aria-hidden="true">R</span>
+          <div><strong id="ai-chat-title">RelyRelay.ai</strong><small>Current assignment only</small></div>
+        </div>
+        <button id="ai-chat-close" class="icon-button" aria-label="Close chat">×</button>
+      </header>
+      <div id="ai-chat-messages" class="ai-chat-messages" aria-live="polite">
+        <div class="chat-message assistant">Ask me about this assignment, its tasks, rubric, workflow, submissions, or progress.</div>
+      </div>
+      <div id="ai-chat-suggestions" class="ai-chat-suggestions" aria-label="Suggested questions">
+        <button type="button">What should I work on next?</button>
+        <button type="button">How is our assignment progressing?</button>
+        <button type="button">What does the rubric require?</button>
+      </div>
+      <form id="ai-chat-form" class="ai-chat-form">
+        <label class="visually-hidden" for="ai-chat-input">Ask RelyRelay.ai</label>
+        <textarea id="ai-chat-input" rows="2" maxlength="2000" placeholder="What should I work on next?" required></textarea>
+        <button class="button primary" type="submit">Send</button>
+      </form>
+    </aside>
   </body>
 </html>

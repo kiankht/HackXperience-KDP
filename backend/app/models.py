@@ -124,6 +124,28 @@ class SubmitTaskRequest(BaseModel):
         return cleaned
 
 
+class ProjectChatMessage(BaseModel):
+    role: str
+    content: str = Field(min_length=1, max_length=2_000)
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, value: str) -> str:
+        if value not in {"user", "assistant"}:
+            raise ValueError("Chat role must be user or assistant.")
+        return value
+
+
+class ProjectChatRequest(BaseModel):
+    question: str = Field(min_length=2, max_length=2_000)
+    history: list[ProjectChatMessage] = Field(default_factory=list, max_length=12)
+
+    @field_validator("question")
+    @classmethod
+    def clean_question(cls, value: str) -> str:
+        return value.strip()
+
+
 class AssignmentAnalysisRequest(BaseModel):
     title: str | None = Field(default=None, max_length=PROJECT_TITLE_MAX_LENGTH)
     deadline: str | None = None

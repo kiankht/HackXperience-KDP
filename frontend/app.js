@@ -3,6 +3,10 @@ const header = document.querySelector("#app-header");
 const nav = document.querySelector("#app-nav");
 const memberControls = document.querySelector("#member-controls");
 const globalMessage = document.querySelector("#global-message");
+const chatLauncher = document.querySelector("#ai-chat-launcher");
+const chatPanel = document.querySelector("#ai-chat-panel");
+const chatMessages = document.querySelector("#ai-chat-messages");
+const chatSuggestions = document.querySelector("#ai-chat-suggestions");
 
 const state = {
   view: "landing",
@@ -16,6 +20,11 @@ const state = {
   submissionResult: null,
   handoffResult: null,
   combinedResult: null,
+  projectStatistics: [],
+  newAssignmentMemberName: null,
+  chatHistory: [],
+  chatProjectId: null,
+  lastClickedSuggestion: null,
   workloadWarning: null,
   highlightedTaskIds: [],
   loading: false,
@@ -252,27 +261,33 @@ function renderHeader() {
   }
   const hasProject = Boolean(state.projectId);
   header.hidden = !hasProject;
+  chatLauncher.hidden = !hasProject;
   if (!hasProject) return;
 
   const items = [];
   if (state.memberId) {
-    items.push(["action", "My Next Action"], ["tasks", "Available Tasks"]);
+    items.push(["work", "My Work"]);
   }
-  items.push(["workflow", "Workflow"]);
-  nav.innerHTML = items
-    .map(([view, label]) => `<button class="nav-link ${state.view === view ? "active" : ""}" data-view="${view}">${label}</button>`)
+  items.push(
+    ["workflow", "Workflow"],
+    ["statistics", "Statistics"],
+    ["assignments", "Assignments"],
+  );
+  nav.innerHTML = `<button class="nav-link back-link" id="global-back" aria-label="Go back">← Back</button>` + items
+    .map(([view, label]) => `<button class="nav-link ${(view === "work" ? ["action", "tasks"].includes(state.view) : state.view === view) ? "active" : ""}" data-view="${view}">${label}</button>`)
     .join("");
 
-  memberControls.innerHTML = `
-    ${state.memberName ? `<span class="member-chip"><span aria-hidden="true">${escapeHtml(state.memberName[0].toUpperCase())}</span>${escapeHtml(state.memberName)}</span>
-      <button class="text-button" id="switch-member">Switch Member</button>` : ""}
-    <button class="text-button danger-text" id="reset-demo">Reset Demo</button>`;
+  memberControls.innerHTML = state.memberName ? `
+    <button class="account-button" id="switch-member" title="Switch member">
+      <span aria-hidden="true">${escapeHtml(state.memberName[0].toUpperCase())}</span>
+      <span>${escapeHtml(state.memberName)}</span>
+    </button>` : "";
 
   nav.querySelectorAll("[data-view]").forEach((button) => {
     button.addEventListener("click", () => navigate(button.dataset.view));
   });
+  document.querySelector("#global-back")?.addEventListener("click", goBack);
   document.querySelector("#switch-member")?.addEventListener("click", switchMember);
-  document.querySelector("#reset-demo")?.addEventListener("click", resetDemoWithConfirmation);
 }
 
 async function loadProject() {
@@ -287,10 +302,16 @@ async function navigate(view) {
   try {
     if (view === "tasks") {
       await showAvailableTasks();
+    } else if (view === "work") {
+      await showNextAction();
     } else if (view === "action") {
       await showNextAction();
     } else if (view === "workflow") {
       await showWorkflow();
+    } else if (view === "statistics") {
+      await showStatistics();
+    } else if (view === "assignments") {
+      await showAssignments();
     } else if (view === "join") {
       await showJoin();
     } else {
@@ -301,10 +322,110 @@ async function navigate(view) {
   }
 }
 
+function startNewAssignment() {
+  state.newAssignmentMemberName = state.memberName;
+  state.assignment = { title: "", deadline: "", assignment_brief: "", rubric_text: "" };
+  state.analysisResult = null;
+  state.files = {
+    assignment: { name: "", status: "", tone: "" },
+    rubric: { name: "", status: "", tone: "" },
+  };
+  showAssignmentInput();
+}
+
+async function showAssignments() {
+  state.view = "assignments";
+  setLoading("Loading your assignments...");
+  state.projectStatistics = await apiRequest("/api/projects");
+  renderAssignments();
+}
+
+function renderAssignments() {
+  state.view = "assignments";
+  state.loading = false;
+  renderHeader();
+  app.className = "app-main";
+  app.innerHTML = `
+    <section class="wide-view assignments-view" aria-labelledby="assignments-title">
+      <div class="view-heading"><div><p class="eyebrow">Assignment menu</p>
+        <h1 id="assignments-title">What do you want to work on?</h1>
+        <p class="lead">Start something new or switch assignments without losing previous work, members, or statistics.</p>
+      </div></div>
+      <section class="assignment-menu-actions" aria-label="Create an assignment">
+        <button class="assignment-menu-card" id="menu-new-assignment">
+          <span aria-hidden="true">+</span><strong>New Assignment</strong>
+          <small>Upload a brief and rubric to build a fresh workflow.</small>
+        </button>
+        <button class="assignment-menu-card" id="menu-start-demo">
+          <span aria-hidden="true">R</span><strong>Start Demo</strong>
+          <small>Open a clean Relay sample while preserving other assignments.</small>
+        </button>
+      </section>
+      <section class="existing-assignments" aria-labelledby="existing-title">
+        <h2 id="existing-title">Existing assignments</h2>
+        <div class="assignment-switch-list">
+          ${state.projectStatistics.length ? state.projectStatistics.map((project) => `
+            <article class="assignment-switch-card ${project.project_id === state.projectId ? "current" : ""}">
+              <div><span class="status-badge ${project.is_complete ? "completed" : "in_progress"}">${project.is_complete ? "Finished" : `${project.progress_percent}% complete`}</span>
+                <h3>${escapeHtml(project.title)}</h3>
+                <p>${project.completed_tasks} of ${project.total_tasks} tasks · ${project.member_count} member${project.member_count === 1 ? "" : "s"}</p>
+              </div>
+              ${project.project_id === state.projectId
+                ? `<button class="button secondary" disabled>Current Assignment</button>`
+                : `<button class="button primary" data-switch-assignment="${escapeHtml(project.project_id)}">Switch to Assignment</button>`}
+            </article>`).join("") : `<div class="empty-state card"><p>No existing assignments yet.</p></div>`}
+        </div>
+      </section>
+    </section>`;
+  document.querySelector("#menu-new-assignment").addEventListener("click", startNewAssignment);
+  document.querySelector("#menu-start-demo").addEventListener("click", startDemo);
+  document.querySelectorAll("[data-switch-assignment]").forEach((button) => {
+    button.addEventListener("click", () => switchAssignment(button.dataset.switchAssignment));
+  });
+  app.focus();
+}
+
+async function switchAssignment(projectId) {
+  const accountName = state.memberName;
+  state.projectId = projectId;
+  localStorage.setItem("relay_project_id", projectId);
+  state.currentTask = null;
+  state.availableTasks = [];
+  state.submissionText = "";
+  setLoading("Switching assignments...");
+  await loadProject();
+  const matchingMember = accountName
+    ? state.project.members.find((member) => member.name.toLowerCase() === accountName.toLowerCase())
+    : null;
+  setStoredMember(matchingMember || null);
+  if (matchingMember) {
+    await continueAfterMemberSelection();
+  } else {
+    await showJoin();
+  }
+}
+
+function goBack() {
+  const destinations = {
+    action: "tasks",
+    tasks: "workflow",
+    workflow: "landing",
+    statistics: "workflow",
+    assignments: "workflow",
+    "combined-result": "workflow",
+    handoff: "workflow",
+    join: "landing",
+  };
+  navigate(destinations[state.view] || "landing");
+}
+
 function renderLanding() {
   state.view = "landing";
   state.loading = false;
   header.hidden = true;
+  chatLauncher.hidden = true;
+  chatPanel.hidden = true;
+  chatLauncher.setAttribute("aria-expanded", "false");
   app.className = "landing-page";
   app.innerHTML = `
     <section class="landing-shell" aria-labelledby="relay-title">
@@ -455,7 +576,10 @@ function showAssignmentInput() {
   document.querySelectorAll("#assignment-form input, #assignment-form textarea").forEach((field) => field.addEventListener("input", sync));
   document.querySelector("#assignment-form").addEventListener("submit", analyseAssignment);
   document.querySelector("#fill-sample").addEventListener("click", fillSampleAssignment);
-  document.querySelector("#assignment-back").addEventListener("click", renderLanding);
+  document.querySelector("#assignment-back").addEventListener("click", () => {
+    state.newAssignmentMemberName = null;
+    renderLanding();
+  });
   bindUploadZone("assignment");
   bindUploadZone("rubric");
   document.querySelector("#assignment-title-input").focus();
@@ -697,6 +821,7 @@ async function buildCustomProject(event) {
     document.querySelector("#review-error").textContent = "Keep a title and at least one deliverable, requirement, and rubric criterion.";
     return;
   }
+  const returningMemberName = state.newAssignmentMemberName;
   setLoading("Building an assignment-specific workflow...");
   try {
     const created = await apiRequest("/api/projects/from-analysis", {
@@ -720,7 +845,20 @@ async function buildCustomProject(event) {
     state.submissionResult = null;
     state.handoffResult = null;
     await loadProject();
-    await showJoin();
+    if (returningMemberName) {
+      const returningMember = await apiRequest(
+        `/api/projects/${state.projectId}/members`,
+        {
+          method: "POST",
+          body: JSON.stringify({ name: returningMemberName }),
+        },
+      );
+      setStoredMember(returningMember);
+      state.newAssignmentMemberName = null;
+      await showAvailableTasks();
+    } else {
+      await showJoin();
+    }
     showMessage(`Your workflow is ready. ${created.workflow_generation_mode === "ai" ? "AI-generated tasks." : "Fallback-generated tasks."}`);
   } catch (error) {
     showAnalysisReview();
@@ -750,6 +888,7 @@ async function checkConnection() {
 }
 
 async function startDemo() {
+  const accountName = state.memberName;
   setLoading("Preparing Relay demo...");
   try {
     const reset = await apiRequest("/api/demo/reset", { method: "POST" });
@@ -760,7 +899,16 @@ async function startDemo() {
     state.handoffResult = null;
     await loadProject();
     showMessage("Demo prepared successfully.");
-    await showJoin();
+    if (accountName) {
+      const member = await apiRequest(`/api/projects/${state.projectId}/members`, {
+        method: "POST",
+        body: JSON.stringify({ name: accountName }),
+      });
+      setStoredMember(member);
+      await showAvailableTasks();
+    } else {
+      await showJoin();
+    }
   } catch {
     renderLanding();
     const result = document.querySelector("#connection-result");
@@ -1201,6 +1349,58 @@ function renderCombinedResult() {
   app.focus();
 }
 
+async function showStatistics() {
+  state.view = "statistics";
+  setLoading("Loading assignment statistics...");
+  state.projectStatistics = await apiRequest("/api/projects");
+  renderStatistics();
+}
+
+function renderStatistics() {
+  state.view = "statistics";
+  state.loading = false;
+  renderHeader();
+  app.className = "app-main";
+  const projects = state.projectStatistics;
+  const completedAssignments = projects.filter((project) => project.is_complete).length;
+  const completedTasks = projects.reduce((sum, project) => sum + project.completed_tasks, 0);
+  const totalTasks = projects.reduce((sum, project) => sum + project.total_tasks, 0);
+  app.innerHTML = `
+    <section class="wide-view statistics-view" aria-labelledby="statistics-title">
+      <div class="view-heading"><div>
+        <p class="eyebrow">All assignments</p>
+        <h1 id="statistics-title">Statistics summary</h1>
+        <p class="lead">Check finished and active assignments without leaving your current workflow.</p>
+      </div></div>
+      <section class="stats-overview" aria-label="Overall statistics">
+        <article><span>Assignments</span><strong>${projects.length}</strong></article>
+        <article><span>Finished</span><strong>${completedAssignments}</strong></article>
+        <article><span>Tasks completed</span><strong>${completedTasks} / ${totalTasks}</strong></article>
+      </section>
+      <section class="stats-projects" aria-label="Assignment statistics">
+        ${projects.length ? projects.map((project) => `
+          <article class="stats-card ${project.project_id === state.projectId ? "current" : ""}">
+            <div class="stats-card-heading"><div>
+              <span class="status-badge ${project.is_complete ? "completed" : "in_progress"}">${project.is_complete ? "Finished" : "Active"}</span>
+              <h2>${escapeHtml(project.title)}</h2>
+              <p>${project.project_id === state.projectId ? "Current assignment" : "Other assignment"}${project.deadline ? ` · due ${formatDate(project.deadline)}` : ""}</p>
+            </div><strong class="progress-number">${project.progress_percent}%</strong></div>
+            <div class="progress-track" aria-label="${project.progress_percent}% complete"><i style="width:${project.progress_percent}%"></i></div>
+            <dl>
+              <div><dt>Completed</dt><dd>${project.completed_tasks}</dd></div>
+              <div><dt>In progress</dt><dd>${project.in_progress_tasks}</dd></div>
+              <div><dt>Available</dt><dd>${project.available_tasks}</dd></div>
+              <div><dt>Waiting</dt><dd>${project.waiting_tasks}</dd></div>
+              <div><dt>Members</dt><dd>${project.member_count}</dd></div>
+              <div><dt>Planned time</dt><dd>${project.estimated_minutes} min</dd></div>
+            </dl>
+            <p class="stats-members"><strong>Member history:</strong> ${project.members.length ? project.members.map(escapeHtml).join(", ") : "No members joined yet"}</p>
+          </article>`).join("") : `<div class="empty-state card"><h2>No assignments yet</h2><p>Create an assignment to begin tracking progress.</p></div>`}
+      </section>
+    </section>`;
+  app.focus();
+}
+
 async function showWorkflow() {
   state.view = "workflow";
   setLoading("Refreshing the workflow…");
@@ -1308,6 +1508,147 @@ function localToday() {
   const offset = now.getTimezoneOffset() * 60000;
   return new Date(now.getTime() - offset).toISOString().slice(0, 10);
 }
+
+function openRelayChat() {
+  if (!state.projectId) return;
+  if (state.chatProjectId !== state.projectId) {
+    state.chatProjectId = state.projectId;
+    state.chatHistory = [];
+    state.lastClickedSuggestion = null;
+    chatMessages.innerHTML = `<div class="chat-message assistant">Ask me about this assignment, its tasks, rubric, workflow, submissions, or progress.</div>`;
+    renderChatSuggestions([
+      "What should I work on next?",
+      "How is our assignment progressing?",
+      "What does the rubric require?",
+    ]);
+  }
+  chatPanel.hidden = false;
+  chatLauncher.setAttribute("aria-expanded", "true");
+  document.querySelector("#ai-chat-input").focus();
+}
+
+function closeRelayChat() {
+  chatPanel.hidden = true;
+  chatLauncher.setAttribute("aria-expanded", "false");
+  chatLauncher.focus();
+}
+
+function beginChatResize(event) {
+  event.preventDefault();
+  const startX = event.clientX;
+  const startY = event.clientY;
+  const startWidth = chatPanel.offsetWidth;
+  const startHeight = chatPanel.offsetHeight;
+  const handle = event.currentTarget;
+  handle.setPointerCapture(event.pointerId);
+  chatPanel.classList.add("resizing");
+
+  const resize = (moveEvent) => {
+    const maximumWidth = window.innerWidth - 28;
+    const maximumHeight = window.innerHeight - 95;
+    chatPanel.style.width = `${Math.min(maximumWidth, Math.max(300, startWidth - (moveEvent.clientX - startX)))}px`;
+    chatPanel.style.height = `${Math.min(maximumHeight, Math.max(390, startHeight - (moveEvent.clientY - startY)))}px`;
+  };
+  const finish = () => {
+    chatPanel.classList.remove("resizing");
+    handle.removeEventListener("pointermove", resize);
+    handle.removeEventListener("pointerup", finish);
+    handle.removeEventListener("pointercancel", finish);
+  };
+  handle.addEventListener("pointermove", resize);
+  handle.addEventListener("pointerup", finish);
+  handle.addEventListener("pointercancel", finish);
+}
+
+function appendChatMessage(content, role) {
+  const message = document.createElement("div");
+  message.className = `chat-message ${role}`;
+  message.textContent = content;
+  chatMessages.appendChild(message);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+  return message;
+}
+
+function renderChatSuggestions(questions = []) {
+  const uniqueQuestions = [...new Set(questions)]
+    .filter((question) => question !== state.lastClickedSuggestion);
+  chatSuggestions.innerHTML = uniqueQuestions.slice(0, 4)
+    .map((question) => `<button type="button">${escapeHtml(question)}</button>`)
+    .join("");
+}
+
+function rotateChatSuggestions(clickedQuestion) {
+  const alternatives = [
+    "Which task is blocking the workflow?",
+    "Summarise the assignment requirements.",
+    "What output does my current task need?",
+    "How can we improve our rubric coverage?",
+    "Which tasks can the team do in parallel?",
+    "What has the team completed so far?",
+    "What should we check before final submission?",
+  ];
+  const visible = [...chatSuggestions.querySelectorAll("button")]
+    .map((button) => button.textContent)
+    .filter((question) => question !== clickedQuestion);
+  renderChatSuggestions([
+    ...visible,
+    ...alternatives.filter((question) => !visible.includes(question)),
+  ]);
+}
+
+async function sendRelayChat(event) {
+  event.preventDefault();
+  const input = document.querySelector("#ai-chat-input");
+  const button = event.currentTarget.querySelector("button[type='submit']");
+  const question = input.value.trim();
+  if (!question || !state.projectId) return;
+  appendChatMessage(question, "user");
+  const priorHistory = state.chatHistory.slice(-12);
+  state.chatHistory.push({ role: "user", content: question });
+  input.value = "";
+  button.disabled = true;
+  const pending = appendChatMessage("Thinking about your Relay project...", "assistant pending");
+  try {
+    const response = await apiRequest(`/api/projects/${state.projectId}/chat`, {
+      method: "POST",
+      body: JSON.stringify({ question, history: priorHistory }),
+    });
+    pending.className = `chat-message assistant${response.in_scope ? "" : " redirected"}`;
+    pending.textContent = response.answer;
+    state.chatHistory.push({ role: "assistant", content: response.answer });
+    state.chatHistory = state.chatHistory.slice(-12);
+    const fallbackQuestions = [
+      "Which task is blocking the workflow?",
+      "What should we check before final submission?",
+      "Summarise our progress so far.",
+    ];
+    renderChatSuggestions([
+      ...(response.suggested_questions || []),
+      ...fallbackQuestions,
+    ]);
+    state.lastClickedSuggestion = null;
+  } catch (error) {
+    pending.className = "chat-message assistant chat-error";
+    pending.textContent = error.message;
+    state.lastClickedSuggestion = null;
+  } finally {
+    button.disabled = false;
+    input.focus();
+  }
+}
+
+chatLauncher.addEventListener("click", openRelayChat);
+document.querySelector("#ai-chat-close").addEventListener("click", closeRelayChat);
+document.querySelector("#ai-chat-resize").addEventListener("pointerdown", beginChatResize);
+document.querySelector("#ai-chat-form").addEventListener("submit", sendRelayChat);
+chatSuggestions.addEventListener("click", (event) => {
+  const suggestion = event.target.closest("button");
+  if (!suggestion) return;
+  state.lastClickedSuggestion = suggestion.textContent;
+  rotateChatSuggestions(suggestion.textContent);
+  document.querySelector("#ai-chat-input").value = state.lastClickedSuggestion;
+  document.querySelector("#ai-chat-form").requestSubmit();
+});
 
 document.querySelector("#brand-home").addEventListener("click", (event) => {
   event.preventDefault();

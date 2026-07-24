@@ -76,6 +76,88 @@ def test_demo_reset_creates_repeatable_project() -> None:
     }
 
 
+def test_project_statistics_summarise_active_assignments() -> None:
+    member = join("Kian")
+    claim("task-problem-research", member["id"])
+    submit("task-problem-research", member["id"], research_submission())
+
+    response = client.get("/api/projects")
+
+    assert response.status_code == 200
+    summary = response.json()[0]
+    assert summary["project_id"] == PROJECT_ID
+    assert summary["completed_tasks"] == 1
+    assert summary["total_tasks"] == 9
+    assert summary["progress_percent"] == 11
+    assert summary["member_count"] == 1
+    assert summary["members"] == ["Kian"]
+    assert summary["accepted_answer_characters"] > 0
+
+
+def test_relay_chat_answers_project_questions_and_refuses_general_knowledge() -> None:
+    project_answer = client.post(
+        f"/api/projects/{PROJECT_ID}/chat",
+        json={"question": "What is the progress of this assignment?"},
+    )
+    general_answer = client.post(
+        f"/api/projects/{PROJECT_ID}/chat",
+        json={"question": "What is the capital of France?"},
+    )
+
+    assert project_answer.status_code == 200
+    assert project_answer.json()["in_scope"] is True
+    assert "tasks" in project_answer.json()["answer"]
+    assert project_answer.json()["suggested_questions"]
+    assert general_answer.status_code == 200
+    assert general_answer.json()["in_scope"] is False
+    assert "connect that back" in general_answer.json()["answer"]
+    assert len(general_answer.json()["suggested_questions"]) >= 2
+
+
+def test_relay_chat_changes_approach_when_user_repeats_a_question() -> None:
+    question = "What should I work on next?"
+    first = client.post(
+        f"/api/projects/{PROJECT_ID}/chat",
+        json={"question": question},
+    ).json()
+    repeated = client.post(
+        f"/api/projects/{PROJECT_ID}/chat",
+        json={
+            "question": question,
+            "history": [
+                {"role": "user", "content": question},
+                {"role": "assistant", "content": first["answer"]},
+            ],
+        },
+    ).json()
+
+    assert repeated["answer"] != first["answer"]
+    assert "more concrete" in repeated["answer"]
+
+
+def test_resetting_demo_preserves_other_assignment_statistics() -> None:
+    other = create_demo_project().model_copy(deep=True)
+    other.id = "project-other-assignment"
+    other.title = "Previous Assignment"
+    for task in other.tasks:
+        task.project_id = other.id
+    store.add_project(other)
+
+    reset = client.post("/api/demo/reset")
+    statistics = client.get("/api/projects").json()
+
+    assert reset.status_code == 200
+    assert {item["project_id"] for item in statistics} == {
+        PROJECT_ID,
+        "project-other-assignment",
+    }
+    previous = next(
+        item for item in statistics
+        if item["project_id"] == "project-other-assignment"
+    )
+    assert previous["title"] == "Previous Assignment"
+
+
 def test_two_starting_tasks_are_available() -> None:
     response = client.get(f"/api/projects/{PROJECT_ID}/available-tasks")
 

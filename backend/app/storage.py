@@ -13,12 +13,26 @@ class InMemoryStorage:
         self._submission_sequence = 0
         self.reset_demo()
 
-    def reset_demo(self) -> Project:
+    def reset_demo(self, *, preserve_other_projects: bool = False) -> Project:
         project = create_demo_project()
-        self.projects = {project.id: project}
-        self.submissions = {}
-        self._member_sequence = 0
-        self._submission_sequence = 0
+        if preserve_other_projects:
+            previous_demo = self.projects.get(project.id)
+            demo_submission_ids = {
+                task.submission_id
+                for task in previous_demo.tasks
+                if task.submission_id is not None
+            } if previous_demo else set()
+            self.projects[project.id] = project
+            self.submissions = {
+                submission_id: submission
+                for submission_id, submission in self.submissions.items()
+                if submission_id not in demo_submission_ids
+            }
+        else:
+            self.projects = {project.id: project}
+            self.submissions = {}
+            self._member_sequence = 0
+            self._submission_sequence = 0
         return project
 
     def get_project(self, project_id: str) -> Project:
