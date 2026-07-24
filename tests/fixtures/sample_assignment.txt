@@ -1,0 +1,16 @@
+Accessible Student Workflow Prototype
+
+Deadline: 15 August 2026
+
+The team must identify an accessibility barrier affecting students who use digital
+group-work tools. Research existing approaches and compare their strengths and
+limitations.
+
+Required deliverables:
+- Build a working web application prototype demonstrating an accessible central workflow.
+- Test keyboard navigation and document expected and actual results.
+- Submit source code in a GitHub repository with setup instructions.
+- Prepare a concise final presentation explaining the problem, evidence, solution, and test result.
+
+The repository must not contain secrets. The final demonstration should show how
+accepted work is passed to the next dependent task.

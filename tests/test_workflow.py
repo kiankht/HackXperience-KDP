@@ -262,6 +262,23 @@ def test_completed_submission_is_transferred_with_member_name_and_content() -> N
     assert context["source_task_id"] == "task-problem-research"
 
 
+def test_combined_result_collects_accepted_answers_in_workflow_order() -> None:
+    member = join("Ping")
+    content = research_submission("student coordination")
+    claim("task-problem-research", member["id"])
+    submit("task-problem-research", member["id"], content)
+
+    response = client.get(f"/api/projects/{PROJECT_ID}/combined-result")
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["is_complete"] is False
+    assert result["completed_task_count"] == 1
+    assert result["sections"][0]["task_id"] == "task-problem-research"
+    assert result["sections"][0]["submitted_by"] == "Ping"
+    assert content in result["combined_content"]
+
+
 def test_two_dependency_task_waits_after_only_one_branch_completes() -> None:
     member = join("Kian")
     claim("task-problem-research", member["id"])

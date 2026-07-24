@@ -27,6 +27,12 @@ class InMemoryStorage:
             raise KeyError("Project not found.")
         return project
 
+    def add_project(self, project: Project) -> Project:
+        if project.id in self.projects:
+            raise ValueError("A project with this ID already exists.")
+        self.projects[project.id] = project
+        return project
+
     def get_task(self, task_id: str) -> tuple[Project, Task]:
         for project in self.projects.values():
             for task in project.tasks:

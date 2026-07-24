@@ -15,9 +15,21 @@ const state = {
   submissionText: "",
   submissionResult: null,
   handoffResult: null,
+  combinedResult: null,
   workloadWarning: null,
   highlightedTaskIds: [],
   loading: false,
+  assignment: { title: "", deadline: "", assignment_brief: "", rubric_text: "" },
+  analysisResult: null,
+  workflowWarnings: [],
+  aiStatus: null,
+  workflowGenerationMode: null,
+  autoRefreshTimer: null,
+  countdownTimer: null,
+  files: {
+    assignment: { name: "", status: "", tone: "" },
+    rubric: { name: "", status: "", tone: "" },
+  },
 };
 
 const statusLabels = {
@@ -136,12 +148,14 @@ function apiErrorMessage(payload, fallback) {
 
 async function apiRequest(path, options = {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10000);
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs || 60000);
+  const isFormData = options.body instanceof FormData;
+  const { timeoutMs, ...fetchOptions } = options;
   try {
     const response = await fetch(path, {
-      ...options,
+      ...fetchOptions,
       headers: {
-        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...(options.body && !isFormData ? { "Content-Type": "application/json" } : {}),
         ...options.headers,
       },
       signal: controller.signal,
@@ -203,6 +217,22 @@ function setStoredMember(member = null) {
   }
 }
 
+function clearCurrentSession() {
+  localStorage.removeItem("relay_project_id");
+  setStoredMember(null);
+  state.projectId = null;
+  state.project = null;
+  state.availableTasks = [];
+  state.currentTask = null;
+  state.submissionText = "";
+  state.submissionResult = null;
+  state.handoffResult = null;
+  state.highlightedTaskIds = [];
+  state.workloadWarning = null;
+  state.workflowWarnings = [];
+  state.workflowGenerationMode = null;
+}
+
 function projectTask(taskId) {
   return state.project?.tasks.find((task) => task.id === taskId);
 }
@@ -216,6 +246,10 @@ function taskTitle(taskId) {
 }
 
 function renderHeader() {
+  if (state.view !== "tasks") {
+    clearTimeout(state.autoRefreshTimer);
+    clearInterval(state.countdownTimer);
+  }
   const hasProject = Boolean(state.projectId);
   header.hidden = !hasProject;
   if (!hasProject) return;
@@ -278,23 +312,420 @@ function renderLanding() {
       <div class="hero-mark" aria-hidden="true">R</div>
       <h1 id="relay-title">Relay</h1>
       <p class="tagline">From assignment brief to next action.</p>
-      <p class="hero-description">Relay turns group assignments into claimable, dependency-aware actions and automatically passes completed work to whoever needs it next.</p>
+      <p class="hero-description">One group member uploads the assignment and rubric. Relay extracts the requirements, divides the project into dependency-aware tasks, then lets every member join by name and choose ready work.</p>
+      <p id="ai-status" class="ai-status" role="status" aria-live="polite">Checking workflow mode…</p>
       <div class="hero-actions">
-        <button class="button primary large" id="start-demo">Start Demo <span aria-hidden="true">→</span></button>
-        <button class="button secondary large" id="check-connection">Check Connection</button>
+        <button class="button primary large" id="create-assignment">Create From Assignment <span aria-hidden="true">→</span></button>
+        ${state.projectId ? `<button class="button secondary large" id="continue-project">Continue Current Project</button>` : ""}
+        <button class="button secondary large" id="start-demo">Start Demo</button>
       </div>
+      <div class="path-explanation">
+        <p><strong>Create From Assignment</strong><span>Paste your own assignment brief and rubric.</span></p>
+        <p><strong>Start Demo</strong><span>Use Relay’s fixed sample project to see claiming and automatic handoffs immediately.</span></p>
+      </div>
+      <button class="text-button" id="check-connection">Check Connection</button>
       <p id="connection-result" class="inline-status" role="status" aria-live="polite">Try the complete handoff in under two minutes.</p>
-      <div class="demo-preview" aria-label="Demo steps">
-        <div><span>1</span><strong>Claim</strong><small>Choose ready work</small></div>
+      <div class="demo-preview" aria-label="Relay workflow">
+        <div><span>1</span><strong>Upload</strong><small>Add the brief and rubric</small></div>
         <i aria-hidden="true">→</i>
-        <div><span>2</span><strong>Complete</strong><small>Meet the output</small></div>
+        <div><span>2</span><strong>Divide</strong><small>AI prepares the workflow</small></div>
         <i aria-hidden="true">→</i>
-        <div><span>3</span><strong>Hand off</strong><small>Unlock what follows</small></div>
+        <div><span>3</span><strong>Choose</strong><small>Members claim ready tasks</small></div>
       </div>
     </section>`;
+  document.querySelector("#create-assignment").addEventListener("click", () => showAssignmentInput());
+  document.querySelector("#continue-project")?.addEventListener("click", continueSavedProject);
   document.querySelector("#start-demo").addEventListener("click", startDemo);
   document.querySelector("#check-connection").addEventListener("click", checkConnection);
+  loadAIStatus();
   app.focus();
+}
+
+async function continueSavedProject() {
+  setLoading("Opening your current project...");
+  try {
+    await loadProject();
+    if (state.memberId && state.project.members.some((member) => member.id === state.memberId)) {
+      await continueAfterMemberSelection();
+    } else {
+      setStoredMember(null);
+      await showJoin();
+    }
+  } catch {
+    localStorage.removeItem("relay_project_id");
+    state.projectId = null;
+    setStoredMember(null);
+    renderLanding();
+    showMessage("The saved project is no longer available. Upload an assignment to begin.", "error");
+  }
+}
+
+async function loadAIStatus() {
+  const display = document.querySelector("#ai-status");
+  if (!display) return;
+  try {
+    state.aiStatus = await apiRequest("/api/ai/status", { timeoutMs: 10000 });
+    display.textContent = state.aiStatus.mode === "real"
+      ? "AI workflow generation ready"
+      : state.aiStatus.mode === "unavailable"
+        ? "AI configuration needs attention — deterministic fallback remains available"
+        : "Fallback mode available";
+    display.className = `ai-status ${state.aiStatus.mode}`;
+  } catch {
+    display.textContent = "Workflow mode will be checked when you begin.";
+  }
+}
+
+function assignmentField(name, label, value, options = {}) {
+  const textarea = options.textarea;
+  const max = options.max || 160;
+  const required = options.required ? "required" : "";
+  const describedBy = `${name}-error${textarea ? ` ${name}-count` : ""}`;
+  return `<div class="field-group">
+    <label for="${name}">${label}${options.optional ? " <span>(optional)</span>" : ""}</label>
+    ${textarea
+      ? `<textarea id="${name}" name="${name}" rows="${options.rows || 8}" maxlength="${max}" ${required} aria-describedby="${describedBy}">${escapeHtml(value)}</textarea>
+         <div class="field-meta"><span id="${name}-count">${value.length.toLocaleString()} / ${max.toLocaleString()}</span></div>`
+      : `<input id="${name}" name="${name}" type="${options.type || "text"}" maxlength="${max}" value="${escapeHtml(value)}" ${options.min ? `min="${escapeHtml(options.min)}"` : ""} ${required} aria-describedby="${describedBy}">`}
+    <p id="${name}-error" class="form-error" role="alert"></p>
+  </div>`;
+}
+
+function uploadZone(type, label) {
+  const file = state.files[type];
+  return `<section class="upload-section" aria-labelledby="${type}-upload-title">
+    <div class="section-heading compact"><div>
+      <h2 id="${type}-upload-title">${label}</h2>
+      <p>Upload a file or paste the text below.</p>
+    </div></div>
+    <div class="drop-zone" id="${type}-drop-zone" tabindex="0" role="button"
+      aria-label="Upload ${type} file" aria-describedby="${type}-upload-help">
+      <strong>Drop ${type} file here</strong>
+      <span>or</span>
+      <button class="button tertiary" type="button" id="browse-${type}">Browse Files</button>
+      <small id="${type}-upload-help">Supported formats: PDF, DOCX, TXT · Maximum 10 MB</small>
+      <input class="visually-hidden" id="${type}-file" type="file" accept=".pdf,.docx,.txt">
+    </div>
+    <div id="${type}-file-result" class="file-result ${escapeHtml(file.tone)}" aria-live="polite">
+      ${file.name ? `<strong>${escapeHtml(file.name)}</strong>` : ""}
+      ${file.status ? `<span>${escapeHtml(file.status)}</span>` : ""}
+      ${file.name ? `<button class="text-button" type="button" id="remove-${type}-file">Remove file</button>` : ""}
+    </div>
+  </section>`;
+}
+
+function showAssignmentInput() {
+  state.view = "assignment";
+  state.loading = false;
+  header.hidden = true;
+  app.className = "app-main";
+  const data = state.assignment;
+  app.innerHTML = `<section class="assignment-view" aria-labelledby="assignment-title">
+    <p class="eyebrow">Create From Assignment</p>
+    <h1 id="assignment-title">Add your assignment</h1>
+    <p class="lead">Paste the assignment brief and marking rubric. Relay will identify the deliverables, requirements, and work that can begin immediately.</p>
+    <form id="assignment-form" class="card assignment-form" novalidate>
+      <div class="two-column-fields">
+        ${assignmentField("assignment-title-input", "Assignment title", data.title, { optional: true, max: 160 })}
+        ${assignmentField("assignment-deadline", "Deadline", data.deadline, { optional: true, type: "date", min: localToday() })}
+      </div>
+      ${uploadZone("assignment", "Assignment")}
+      ${assignmentField("assignment-brief", "Assignment brief", data.assignment_brief, { textarea: true, required: true, max: 30000, rows: 11 })}
+      ${uploadZone("rubric", "Marking rubric")}
+      ${assignmentField("rubric-text", "Marking rubric", data.rubric_text, { textarea: true, required: true, max: 20000, rows: 8 })}
+      <p class="privacy-copy">Your assignment content is processed to generate the workflow. Do not upload documents containing passwords, private identification documents, or API keys.</p>
+      <p id="assignment-request-error" class="form-error" role="alert"></p>
+      <div class="form-actions">
+        <button class="button primary" type="submit">Analyse Assignment</button>
+        <button class="button secondary" type="button" id="fill-sample">Fill Sample Assignment</button>
+        <button class="text-button" type="button" id="assignment-back">Back</button>
+      </div>
+    </form>
+  </section>`;
+  const sync = () => {
+    state.assignment = {
+      title: document.querySelector("#assignment-title-input").value,
+      deadline: document.querySelector("#assignment-deadline").value,
+      assignment_brief: document.querySelector("#assignment-brief").value,
+      rubric_text: document.querySelector("#rubric-text").value,
+    };
+    document.querySelector("#assignment-brief-count").textContent = `${state.assignment.assignment_brief.length.toLocaleString()} / 30,000`;
+    document.querySelector("#rubric-text-count").textContent = `${state.assignment.rubric_text.length.toLocaleString()} / 20,000`;
+  };
+  document.querySelectorAll("#assignment-form input, #assignment-form textarea").forEach((field) => field.addEventListener("input", sync));
+  document.querySelector("#assignment-form").addEventListener("submit", analyseAssignment);
+  document.querySelector("#fill-sample").addEventListener("click", fillSampleAssignment);
+  document.querySelector("#assignment-back").addEventListener("click", renderLanding);
+  bindUploadZone("assignment");
+  bindUploadZone("rubric");
+  document.querySelector("#assignment-title-input").focus();
+}
+
+function bindUploadZone(type) {
+  const zone = document.querySelector(`#${type}-drop-zone`);
+  const input = document.querySelector(`#${type}-file`);
+  const browse = document.querySelector(`#browse-${type}`);
+  const openPicker = () => input.click();
+  browse.addEventListener("click", (event) => { event.stopPropagation(); openPicker(); });
+  zone.addEventListener("click", (event) => {
+    if (event.target !== browse && event.target !== input) openPicker();
+  });
+  zone.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openPicker();
+    }
+  });
+  ["dragenter", "dragover"].forEach((name) => zone.addEventListener(name, (event) => {
+    event.preventDefault();
+    zone.classList.add("drag-over");
+  }));
+  ["dragleave", "drop"].forEach((name) => zone.addEventListener(name, (event) => {
+    event.preventDefault();
+    zone.classList.remove("drag-over");
+  }));
+  zone.addEventListener("drop", (event) => {
+    const file = event.dataTransfer?.files?.[0];
+    if (file) extractDocumentFile(type, file);
+  });
+  input.addEventListener("change", () => {
+    if (input.files?.[0]) extractDocumentFile(type, input.files[0]);
+  });
+  document.querySelector(`#remove-${type}-file`)?.addEventListener("click", () => {
+    state.files[type] = { name: "", status: "", tone: "" };
+    showAssignmentInput();
+  });
+}
+
+async function extractDocumentFile(type, file) {
+  const extension = `.${file.name.split(".").pop()?.toLowerCase()}`;
+  if (![".pdf", ".docx", ".txt"].includes(extension)) {
+    state.files[type] = { name: file.name, status: "Supported file types are PDF, DOCX, and TXT.", tone: "error" };
+    showAssignmentInput();
+    return;
+  }
+  if (!file.size || file.size > 10_485_760) {
+    state.files[type] = { name: file.name, status: file.size ? "This file exceeds the 10 MB limit." : "This file is empty.", tone: "error" };
+    showAssignmentInput();
+    return;
+  }
+  state.files[type] = { name: file.name, status: "Extracting text...", tone: "checking" };
+  showAssignmentInput();
+  const form = new FormData();
+  form.append("file", file);
+  form.append("document_type", type);
+  try {
+    const result = await apiRequest("/api/files/extract", {
+      method: "POST",
+      body: form,
+      timeoutMs: 60000,
+    });
+    const key = type === "assignment" ? "assignment_brief" : "rubric_text";
+    state.assignment[key] = result.text;
+    state.files[type] = {
+      name: result.filename,
+      status: `Text extracted successfully — ${result.character_count.toLocaleString()} characters`,
+      tone: "success",
+    };
+  } catch (error) {
+    state.files[type] = {
+      name: file.name,
+      status: `${error.message} Paste the text below instead.`,
+      tone: "error",
+    };
+  }
+  showAssignmentInput();
+}
+
+function validateAssignmentInput() {
+  const errors = {};
+  const data = {
+    title: state.assignment.title.trim(),
+    deadline: state.assignment.deadline || null,
+    assignment_brief: state.assignment.assignment_brief.trim(),
+    rubric_text: state.assignment.rubric_text.trim(),
+  };
+  if (data.title.length > 160) errors["assignment-title-input"] = "Keep the title to 160 characters or fewer.";
+  if (data.deadline && data.deadline < localToday()) errors["assignment-deadline"] = "Deadline cannot be earlier than today.";
+  if (data.assignment_brief.length < 80) errors["assignment-brief"] = "Add at least 80 characters from the assignment brief.";
+  if (data.rubric_text.length < 30) errors["rubric-text"] = "Add at least 30 characters from the marking rubric.";
+  document.querySelectorAll(".form-error").forEach((element) => { if (element.id !== "assignment-request-error") element.textContent = ""; });
+  document.querySelectorAll("[aria-invalid]").forEach((element) => element.removeAttribute("aria-invalid"));
+  Object.entries(errors).forEach(([id, message]) => {
+    document.querySelector(`#${id}-error`).textContent = message;
+    document.querySelector(`#${id}`).setAttribute("aria-invalid", "true");
+  });
+  if (Object.keys(errors).length) document.querySelector(`#${Object.keys(errors)[0]}`).focus();
+  return { valid: !Object.keys(errors).length, data };
+}
+
+async function fillSampleAssignment() {
+  const button = document.querySelector("#fill-sample");
+  button.disabled = true;
+  button.textContent = "Loading sample…";
+  try {
+    const sample = await apiRequest("/api/samples/assignment");
+    state.assignment = { ...sample };
+    showAssignmentInput();
+    showMessage("Sample assignment added.");
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = "Fill Sample Assignment";
+    document.querySelector("#assignment-request-error").textContent = error.message;
+  }
+}
+
+async function analyseAssignment(event) {
+  event.preventDefault();
+  const result = validateAssignmentInput();
+  if (!result.valid) return;
+  setLoading("Reading your assignment...");
+  try {
+    state.analysisResult = await apiRequest("/api/assignments/analyze", {
+      method: "POST",
+      body: JSON.stringify(result.data),
+    });
+    if (!state.analysisResult?.rubric?.length || !state.analysisResult?.deliverables?.length) {
+      throw new Error("Relay received an incomplete analysis response.");
+    }
+    showAnalysisReview();
+  } catch (error) {
+    showAssignmentInput();
+    document.querySelector("#assignment-request-error").textContent = error.message;
+  }
+}
+
+function editableList(items, type) {
+  return items.map((item, index) => `<div class="editable-row">
+    <input type="text" value="${escapeHtml(item)}" data-${type}-index="${index}" aria-label="${type} ${index + 1}">
+    <button class="icon-button" type="button" data-remove-${type}="${index}" aria-label="Remove ${type} ${index + 1}">×</button>
+  </div>`).join("");
+}
+
+function showAnalysisReview() {
+  const result = state.analysisResult;
+  state.view = "analysis-review";
+  header.hidden = true;
+  app.className = "app-main";
+  const total = result.rubric.reduce((sum, item) => sum + Number(item.marks || 0), 0);
+  app.innerHTML = `<section class="review-view" aria-labelledby="review-title">
+    <p class="eyebrow">Assignment analysis</p>
+    <h1 id="review-title">Check what Relay found</h1>
+    <p class="lead">Review the assignment details before Relay builds the workflow.</p>
+    <p class="mode-badge ${result.analysis_mode === "ai" ? "ai" : "fallback"}">${result.analysis_mode === "ai" ? "Analysed with AI" : "Created with fallback analysis"}</p>
+    ${result.analysis_notes?.length ? `<section class="notice info"><strong>Analysis notes</strong>${list(result.analysis_notes)}</section>` : ""}
+    ${result.extraction_warnings.length ? `<section class="notice warning review-warning"><strong>Review suggested</strong>${list(result.extraction_warnings)}</section>` : ""}
+    <form id="review-form" novalidate>
+      <section class="card review-section"><h2>Project details</h2><div class="two-column-fields">
+        ${assignmentField("review-title-input", "Title", result.suggested_title, { max: 160, required: true })}
+        ${assignmentField("review-deadline", "Deadline", result.suggested_deadline || "", { optional: true, type: "date", min: localToday() })}
+      </div></section>
+      <section class="card review-section"><div class="section-heading"><div><h2>Deliverables</h2><p>What the group must produce.</p></div><button class="button tertiary" type="button" id="add-deliverable">Add deliverable</button></div>
+        <div id="deliverables-list">${editableList(result.deliverables, "deliverable")}</div></section>
+      <section class="card review-section"><div class="section-heading"><div><h2>Requirements</h2><p>What the work must demonstrate or include.</p></div><button class="button tertiary" type="button" id="add-requirement">Add requirement</button></div>
+        <div id="requirements-list">${editableList(result.requirements, "requirement")}</div></section>
+      <section class="card review-section"><div class="section-heading"><div><h2>Rubric</h2><p>Edit criteria and marks before building.</p></div><button class="button tertiary" type="button" id="add-rubric">Add criterion</button></div>
+        <div id="rubric-list">${result.rubric.map((item, index) => rubricRow(item, index)).join("")}</div>
+        <p id="rubric-total" class="rubric-total ${total === 100 ? "" : "warning-text"}">Total marks: ${total}${total === 100 ? "" : " — review before continuing"}</p>
+      </section>
+      <p id="review-error" class="form-error" role="alert"></p>
+      <div class="form-actions sticky-actions"><button class="button primary large" type="submit">Confirm and Build Workflow</button>
+        <button class="button secondary" type="button" id="back-to-assignment">Back to Edit Assignment</button></div>
+    </form>
+  </section>`;
+  bindReviewEvents();
+}
+
+function rubricRow(item, index) {
+  return `<div class="rubric-row" data-rubric-row="${index}">
+    <div><label for="criterion-${index}">Criterion</label><input id="criterion-${index}" data-rubric-field="criterion" value="${escapeHtml(item.criterion)}"></div>
+    <div><label for="description-${index}">Description</label><input id="description-${index}" data-rubric-field="description" value="${escapeHtml(item.description)}"></div>
+    <div><label for="marks-${index}">Marks</label><input id="marks-${index}" data-rubric-field="marks" type="number" min="0" max="100" value="${Number(item.marks)}"></div>
+    <button class="icon-button" type="button" data-remove-rubric="${index}" aria-label="Remove rubric criterion ${index + 1}">×</button>
+  </div>`;
+}
+
+function syncReviewState() {
+  const result = state.analysisResult;
+  result.suggested_title = document.querySelector("#review-title-input").value;
+  result.suggested_deadline = document.querySelector("#review-deadline").value || null;
+  result.deliverables = [...document.querySelectorAll("[data-deliverable-index]")].map((input) => input.value);
+  result.requirements = [...document.querySelectorAll("[data-requirement-index]")].map((input) => input.value);
+  result.rubric = [...document.querySelectorAll("[data-rubric-row]")].map((row, index) => ({
+    id: result.rubric[index]?.id || `rubric-custom-${Date.now()}-${index}`,
+    criterion: row.querySelector("[data-rubric-field='criterion']").value,
+    description: row.querySelector("[data-rubric-field='description']").value,
+    marks: Number(row.querySelector("[data-rubric-field='marks']").value || 0),
+  }));
+}
+
+function bindReviewEvents() {
+  document.querySelector("#review-form").addEventListener("input", () => {
+    const total = [...document.querySelectorAll("[data-rubric-field='marks']")].reduce((sum, input) => sum + Number(input.value || 0), 0);
+    const display = document.querySelector("#rubric-total");
+    display.textContent = `Total marks: ${total}${total === 100 ? "" : " — review before continuing"}`;
+    display.classList.toggle("warning-text", total !== 100);
+  });
+  document.querySelector("#review-form").addEventListener("submit", buildCustomProject);
+  document.querySelector("#back-to-assignment").addEventListener("click", () => { syncReviewState(); showAssignmentInput(); });
+  document.querySelector("#add-deliverable").addEventListener("click", () => { syncReviewState(); state.analysisResult.deliverables.push(""); showAnalysisReview(); document.querySelectorAll("[data-deliverable-index]")[state.analysisResult.deliverables.length - 1].focus(); });
+  document.querySelector("#add-requirement").addEventListener("click", () => { syncReviewState(); state.analysisResult.requirements.push(""); showAnalysisReview(); document.querySelectorAll("[data-requirement-index]")[state.analysisResult.requirements.length - 1].focus(); });
+  document.querySelector("#add-rubric").addEventListener("click", () => { syncReviewState(); state.analysisResult.rubric.push({ id: `rubric-custom-${Date.now()}`, criterion: "", description: "", marks: 0 }); showAnalysisReview(); });
+  ["deliverable", "requirement", "rubric"].forEach((type) => {
+    document.querySelectorAll(`[data-remove-${type}]`).forEach((button) => button.addEventListener("click", () => {
+      syncReviewState();
+      const index = Number(button.dataset[`remove${type[0].toUpperCase()}${type.slice(1)}`]);
+      state.analysisResult[type === "rubric" ? "rubric" : `${type}s`].splice(index, 1);
+      showAnalysisReview();
+    }));
+  });
+}
+
+async function buildCustomProject(event) {
+  event.preventDefault();
+  syncReviewState();
+  const result = state.analysisResult;
+  const deliverables = result.deliverables.map((item) => item.trim()).filter(Boolean);
+  const requirements = result.requirements.map((item) => item.trim()).filter(Boolean);
+  const rubric = result.rubric.filter((item) => item.criterion.trim());
+  if (result.suggested_deadline && result.suggested_deadline < localToday()) {
+    document.querySelector("#review-error").textContent = "Deadline cannot be earlier than today.";
+    document.querySelector("#review-deadline").focus();
+    return;
+  }
+  if (!result.suggested_title.trim() || !deliverables.length || !requirements.length || !rubric.length) {
+    document.querySelector("#review-error").textContent = "Keep a title and at least one deliverable, requirement, and rubric criterion.";
+    return;
+  }
+  setLoading("Building an assignment-specific workflow...");
+  try {
+    const created = await apiRequest("/api/projects/from-analysis", {
+      method: "POST",
+      body: JSON.stringify({
+        title: result.suggested_title.trim(),
+        deadline: result.suggested_deadline || null,
+        deliverables, requirements, rubric,
+        original_assignment_brief: state.assignment.assignment_brief.trim(),
+        original_rubric_text: state.assignment.rubric_text.trim(),
+      }),
+    });
+    state.projectId = created.project_id;
+    state.workflowWarnings = created.workflow_warnings || [];
+    state.workflowGenerationMode = created.workflow_generation_mode;
+    localStorage.setItem("relay_project_id", state.projectId);
+    setStoredMember(null);
+    state.currentTask = null;
+    state.availableTasks = [];
+    state.submissionText = "";
+    state.submissionResult = null;
+    state.handoffResult = null;
+    await loadProject();
+    await showJoin();
+    showMessage(`Your workflow is ready. ${created.workflow_generation_mode === "ai" ? "AI-generated tasks." : "Fallback-generated tasks."}`);
+  } catch (error) {
+    showAnalysisReview();
+    document.querySelector("#review-error").textContent = error.message;
+  }
 }
 
 async function checkConnection() {
@@ -469,7 +900,39 @@ function renderAvailableTasks() {
   document.querySelectorAll("[data-claim-task]").forEach((button) => {
     button.addEventListener("click", () => claimTask(button.dataset.claimTask, button));
   });
+  scheduleAutoClaimRefresh();
   app.focus();
+}
+
+function autoClaimText(value) {
+  if (!value) return "Timer starts when this task becomes ready";
+  const seconds = Math.max(0, Math.ceil((new Date(value).getTime() - Date.now()) / 1000));
+  if (seconds === 0) return "Auto-assignment is due now";
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `Auto-assigns in ${minutes ? `${minutes}m ` : ""}${remainder}s if unclaimed`;
+}
+
+function scheduleAutoClaimRefresh() {
+  clearTimeout(state.autoRefreshTimer);
+  clearInterval(state.countdownTimer);
+  if (state.view !== "tasks" || !state.availableTasks.length) return;
+  const updateCountdowns = () => {
+    document.querySelectorAll("[data-auto-claim-at]").forEach((element) => {
+      element.textContent = autoClaimText(element.dataset.autoClaimAt);
+    });
+  };
+  updateCountdowns();
+  state.countdownTimer = setInterval(updateCountdowns, 1000);
+  const next = Math.min(...state.availableTasks.map(
+    (task) => task.auto_claim_at ? new Date(task.auto_claim_at).getTime() : Infinity,
+  ));
+  const delay = Number.isFinite(next)
+    ? Math.max(250, next - Date.now() + 250)
+    : 10000;
+  state.autoRefreshTimer = setTimeout(() => {
+    if (state.view === "tasks") showAvailableTasks();
+  }, delay);
 }
 
 function renderTaskCard(task) {
@@ -484,6 +947,8 @@ function renderTaskCard(task) {
       <div><dt>Work style</dt><dd>${escapeHtml(capitalise(task.work_style))}</dd></div>
       <div><dt>Rubric</dt><dd>${rubric ? `${escapeHtml(rubric.criterion)} — ${rubric.marks} marks` : "Not linked"}</dd></div>
       <div><dt>Submit</dt><dd>${escapeHtml(task.required_output.join(" · "))}</dd></div>
+      <div><dt>Due</dt><dd>${task.due_date ? formatDate(task.due_date) : "No project deadline"}</dd></div>
+      <div><dt>Claim timer</dt><dd><span data-auto-claim-at="${escapeHtml(task.auto_claim_at || "")}">${escapeHtml(autoClaimText(task.auto_claim_at))}</span></dd></div>
       <div><dt>Unlocks</dt><dd>${task.unlocks.length ? task.unlocks.map(taskTitle).map(escapeHtml).join(", ") : "Final task"}</dd></div>
     </dl>
     <button class="button primary full" data-claim-task="${escapeHtml(task.id)}">Claim Task</button>
@@ -535,7 +1000,7 @@ function renderNextAction() {
     <section class="action-view" aria-labelledby="action-title">
       <div class="action-heading">
         <div><p class="eyebrow">Your next action</p><h1 id="action-title">${escapeHtml(task.task_title)}</h1></div>
-        <div class="action-time"><strong>${task.estimated_minutes}</strong><span>minutes</span></div>
+        <div class="action-time"><strong>${task.estimated_minutes}</strong><span>minutes · due ${task.due_date ? formatDate(task.due_date) : "not set"}</span></div>
       </div>
       ${state.workloadWarning ? `<aside class="notice warning"><strong>Workload note</strong><p>${escapeHtml(state.workloadWarning)}</p></aside>` : ""}
       ${isRevision ? renderRevisionResult() : ""}
@@ -562,7 +1027,7 @@ function renderNextAction() {
         <div class="demo-helper">
           <div><strong>Demo helpers</strong><small>Sample content only — not genuine student work.</small></div>
           <button class="button tertiary" id="fill-incomplete">Fill Incomplete Example</button>
-          <button class="button tertiary" id="fill-valid" ${demoSubmissions[task.task_id] ? "" : "disabled"}>Fill Demo Submission</button>
+          <button class="button tertiary" id="fill-valid">Fill Demo Submission</button>
         </div>
         <button class="button primary full submit-button" id="submit-task">${isRevision ? "Update and Resubmit" : "Submit and Hand Off"} <span aria-hidden="true">→</span></button>
       </section>
@@ -584,6 +1049,7 @@ function renderRevisionResult() {
   return `<aside class="revision-result" tabindex="-1" id="revision-result">
     <span class="result-icon" aria-hidden="true">!</span>
     <div><p class="card-label">Needs revision</p><h2>A little more is needed</h2>
+      <p class="mode-badge ${result.validation_mode}">${result.validation_mode === "ai" ? "Checked with AI" : "Checked with fallback rules"}</p>
       <p>${escapeHtml(result.feedback)}</p><h3>Missing:</h3>${list(result.missing_items)}</div>
   </aside>`;
 }
@@ -612,7 +1078,8 @@ function submissionPlaceholder(taskId) {
 function fillSubmission(valid) {
   const taskId = state.currentTask.task_id;
   state.submissionText = valid
-    ? demoSubmissions[taskId] || ""
+    ? demoSubmissions[taskId] || `Completed output:
+This submission documents the completed task in enough detail for the next group member to continue. It addresses each required output, records the main decisions made, and explains how the result supports the confirmed assignment requirements. The team can use this accepted context when completing dependent work.`
     : incompleteSubmissions[taskId] || incompleteSubmissions.default;
   const textarea = document.querySelector("#submission-content");
   textarea.value = state.submissionText;
@@ -677,6 +1144,7 @@ function renderHandoffSuccess() {
       <p class="eyebrow">Handoff complete</p>
       <h1 id="handoff-title">Task completed</h1>
       <p class="success-lead">Your work has been accepted and passed forward.</p>
+      <p class="mode-badge ${result.validation_mode}">${result.validation_mode === "ai" ? "Checked with AI" : "Checked with fallback rules"}</p>
       <div class="handoff-flow">
         <article class="handoff-node completed"><span class="status-badge completed">Completed</span>
           <h2>${escapeHtml(result.completedTaskTitle)}</h2><p>Completed by ${escapeHtml(result.completedBy)}</p></article>
@@ -688,14 +1156,48 @@ function renderHandoffSuccess() {
       </div>
       <p class="validation-note">${escapeHtml(result.feedback)}</p>
       <div class="handoff-actions">
+        ${result.workflow_complete ? `<button class="button primary large" id="view-combined">View Combined Result</button>` : ""}
         ${unlocked.length ? `<button class="button primary large" id="view-unlocked">View Unlocked Task</button>` : ""}
         <button class="button secondary large" id="handoff-workflow">Return to Workflow</button>
         <button class="text-button" id="handoff-switch">Switch Member</button>
       </div>
     </section>`;
   document.querySelector("#view-unlocked")?.addEventListener("click", showAvailableTasks);
+  document.querySelector("#view-combined")?.addEventListener("click", showCombinedResult);
   document.querySelector("#handoff-workflow").addEventListener("click", showWorkflow);
   document.querySelector("#handoff-switch").addEventListener("click", switchMember);
+  app.focus();
+}
+
+async function showCombinedResult() {
+  setLoading("Combining every accepted answer...");
+  state.combinedResult = await apiRequest(`/api/projects/${state.projectId}/combined-result`);
+  renderCombinedResult();
+}
+
+function renderCombinedResult() {
+  state.view = "combined-result";
+  renderHeader();
+  app.className = "app-main";
+  const result = state.combinedResult;
+  app.innerHTML = `
+    <section class="wide-view combined-result-view" aria-labelledby="combined-title">
+      <div class="view-heading"><div>
+        <p class="eyebrow">${result.is_complete ? "Workflow complete" : "Combined draft"}</p>
+        <h1 id="combined-title">Your mega result</h1>
+        <p class="lead">${result.completed_task_count} of ${result.total_task_count} task answers combined in workflow order.</p>
+      </div><button class="button secondary" id="combined-back">Return to Workflow</button></div>
+      <div class="combined-actions">
+        <button class="button primary" id="copy-combined">Copy everything</button>
+        <span id="copy-status" role="status" aria-live="polite"></span>
+      </div>
+      <article class="combined-document"><pre>${escapeHtml(result.combined_content)}</pre></article>
+    </section>`;
+  document.querySelector("#combined-back").addEventListener("click", showWorkflow);
+  document.querySelector("#copy-combined").addEventListener("click", async () => {
+    await navigator.clipboard.writeText(result.combined_content);
+    document.querySelector("#copy-status").textContent = "Copied.";
+  });
   app.focus();
 }
 
@@ -716,7 +1218,10 @@ function renderWorkflow() {
     <section class="wide-view workflow-view" aria-labelledby="workflow-title">
       <div class="view-heading"><div><p class="eyebrow">Dependency-aware plan</p><h1 id="workflow-title">${escapeHtml(state.project.title)}</h1>
         <p class="lead">${state.project.deadline ? `Deadline ${formatDate(state.project.deadline)}` : "No deadline set"} · ${state.project.tasks.length} executable tasks</p></div>
-        ${state.memberId ? `<button class="button primary" id="workflow-tasks">Choose Available Work</button>` : `<button class="button primary" id="workflow-join">Join Project</button>`}
+        <div class="workflow-heading-actions">
+          ${state.project.tasks.some((task) => task.status === "completed") ? `<button class="button secondary" id="workflow-combined">View Combined Result</button>` : ""}
+          ${state.memberId ? `<button class="button primary" id="workflow-tasks">Choose Available Work</button>` : `<button class="button primary" id="workflow-join">Join Project</button>`}
+        </div>
       </div>
       <section class="workflow-summary" aria-labelledby="coverage-title">
         <div><p class="card-label">Rubric coverage</p><h2 id="coverage-title">${coverage.covered_marks} of ${coverage.total_marks} marks connected</h2></div>
@@ -737,6 +1242,7 @@ function renderWorkflow() {
             <dl class="workflow-meta">
               <div><dt>Owner</dt><dd>${escapeHtml(memberName(task.claimed_by))}</dd></div>
               <div><dt>Rubric</dt><dd>${escapeHtml(rubricMap[task.rubric_id]?.criterion || "Not linked")}</dd></div>
+              <div><dt>Due</dt><dd>${task.due_date ? formatDate(task.due_date) : "No project deadline"}</dd></div>
               <div><dt>Depends on</dt><dd>${task.dependencies.length ? task.dependencies.map(taskTitle).map(escapeHtml).join(", ") : "Can begin immediately"}</dd></div>
               <div><dt>Unlocks</dt><dd>${task.unlocks.length ? task.unlocks.map(taskTitle).map(escapeHtml).join(", ") : "Final task"}</dd></div>
             </dl>
@@ -746,6 +1252,7 @@ function renderWorkflow() {
       ${state.project.members.length ? `<section class="workflow-members"><h2>Group members</h2><div>${state.project.members.map((member) => `<span class="member-chip"><span>${escapeHtml(member.name[0])}</span>${escapeHtml(member.name)} · ${member.total_estimated_minutes} min</span>`).join("")}</div></section>` : ""}
     </section>`;
   document.querySelector("#workflow-tasks")?.addEventListener("click", showAvailableTasks);
+  document.querySelector("#workflow-combined")?.addEventListener("click", showCombinedResult);
   document.querySelector("#workflow-join")?.addEventListener("click", showJoin);
   app.focus();
 }
@@ -763,20 +1270,10 @@ async function resetDemoWithConfirmation() {
   if (!window.confirm("Reset the demo? This clears all members, claims, and completed work.")) return;
   setLoading("Resetting Relay demo…");
   try {
-    const reset = await apiRequest("/api/demo/reset", { method: "POST" });
-    localStorage.clear();
-    state.projectId = reset.project_id;
-    localStorage.setItem("relay_project_id", reset.project_id);
-    setStoredMember(null);
-    state.currentTask = null;
-    state.submissionText = "";
-    state.submissionResult = null;
-    state.handoffResult = null;
-    state.highlightedTaskIds = [];
-    state.workloadWarning = null;
-    await loadProject();
-    await showJoin();
-    showMessage("Demo reset successfully.");
+    await apiRequest("/api/demo/reset", { method: "POST" });
+    clearCurrentSession();
+    renderLanding();
+    showMessage("Reset complete. Upload an assignment to start a new project.");
   } catch (error) {
     renderError(error.message, resetDemoWithConfirmation);
   }
@@ -806,32 +1303,27 @@ function formatDate(value) {
   return new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: value.includes("T") ? "short" : undefined }).format(date);
 }
 
+function localToday() {
+  const now = new Date();
+  const offset = now.getTimezoneOffset() * 60000;
+  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
+}
+
 document.querySelector("#brand-home").addEventListener("click", (event) => {
   event.preventDefault();
-  if (state.memberId) showNextAction();
-  else if (state.projectId) showJoin();
-  else renderLanding();
+  renderLanding();
 });
 
 async function restoreSession() {
-  if (!state.projectId) {
-    renderLanding();
-    return;
-  }
-  try {
-    await loadProject();
-    if (state.memberId && state.project.members.some((member) => member.id === state.memberId)) {
-      await continueAfterMemberSelection();
-    } else {
-      setStoredMember(null);
-      await showJoin();
-    }
-  } catch {
-    localStorage.clear();
-    state.projectId = null;
-    setStoredMember(null);
-    renderLanding();
-  }
+  // Always begin at the product entry point. Saved progress remains available
+  // through "Continue Current Project", but never bypasses assignment upload.
+  renderLanding();
 }
 
 restoreSession();
+
+// A browser can revive the last visible screen from its page cache. Treat that
+// the same as a refresh and show the assignment-upload home screen.
+window.addEventListener("pageshow", () => {
+  renderLanding();
+});

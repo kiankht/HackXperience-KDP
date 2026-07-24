@@ -1,0 +1,11 @@
+Problem understanding and accessibility research — 25 marks
+Evidence supporting the selected student accessibility barrier.
+
+Critical evaluation and workflow design — 25 marks
+Comparison of existing approaches and quality of the proposed workflow.
+
+Technical implementation — 30 marks
+Functionality and accessibility of the working prototype.
+
+Testing, documentation, and presentation — 20 marks
+Keyboard testing, setup instructions, and communication quality.

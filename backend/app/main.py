@@ -1,22 +1,33 @@
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .models import (
+    AssignmentAnalysisRequest,
     ClaimTaskRequest,
+    ConfirmedProjectRequest,
     JoinProjectRequest,
     SubmitTaskRequest,
     TaskStatus,
 )
+from .ai_service import AIConfigurationError, AIService, AIServiceError
+from .config import Settings
+from .file_extraction import FileExtractionError, extract_uploaded_text
+from .sample_inputs import SAMPLE_ASSIGNMENT
+from .sample_data import DEMO_PROJECT_ID
 from .storage import InMemoryStorage
 from .workflow import (
+    auto_claim_overdue_tasks,
     available_tasks,
+    build_combined_result,
     claim_task,
+    build_combined_result,
     criterion_for_task,
     refresh_member_workloads,
     rubric_coverage,
+    schedule_project_tasks,
     unlock_dependents,
     validate_dependency_references,
     validate_submission,
@@ -26,6 +37,8 @@ from .workflow import (
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 store = InMemoryStorage()
+settings = Settings.from_environment()
+ai_service = AIService(settings)
 
 app = FastAPI(
     title="Relay API",
@@ -41,10 +54,107 @@ def health() -> dict[str, str]:
     return {"status": "ok", "app": "Relay"}
 
 
+@app.get("/api/samples/assignment")
+def sample_assignment() -> dict[str, str]:
+    return SAMPLE_ASSIGNMENT
+
+
+@app.get("/api/ai/status")
+def ai_status() -> dict[str, object]:
+    return ai_service.status()
+
+
+@app.post("/api/files/extract")
+async def extract_file(
+    file: UploadFile = File(...),
+    document_type: str = Form(...),
+) -> dict[str, object]:
+    if document_type not in {"assignment", "rubric"}:
+        raise HTTPException(
+            status_code=422,
+            detail="Document type must be assignment or rubric.",
+        )
+    try:
+        content = await file.read(settings.max_upload_bytes + 1)
+        filename, file_type, text = extract_uploaded_text(
+            filename=file.filename,
+            content_type=file.content_type,
+            content=content,
+            max_bytes=settings.max_upload_bytes,
+        )
+    except FileExtractionError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    finally:
+        await file.close()
+    text_limit = (
+        30_000 if document_type == "assignment" else 20_000
+    )
+    if len(text) > text_limit:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Extracted {document_type} text exceeds the "
+                f"{text_limit:,}-character limit."
+            ),
+        )
+    return {
+        "filename": filename,
+        "document_type": document_type,
+        "file_type": file_type,
+        "character_count": len(text),
+        "text": text,
+        "warnings": [],
+    }
+
+
+@app.post("/api/assignments/analyze")
+def analyse_assignment(payload: AssignmentAnalysisRequest) -> dict[str, object]:
+    try:
+        result, mode = ai_service.analyze_assignment(payload)
+    except (AIConfigurationError, AIServiceError) as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return {
+        **result.model_dump(mode="json"),
+        "analysis_mode": mode,
+    }
+
+
+@app.post("/api/projects/from-analysis", status_code=status.HTTP_201_CREATED)
+def create_project_from_analysis(
+    payload: ConfirmedProjectRequest,
+) -> dict[str, object]:
+    try:
+        generation = ai_service.generate_project(payload)
+        project = generation.project
+        warnings = generation.warnings
+        validate_dependency_references(project)
+        schedule_project_tasks(project, settings.auto_claim_seconds)
+        store.add_project(project)
+    except (AIConfigurationError, AIServiceError) as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Relay could not build a valid workflow: {error}",
+        ) from error
+    return {
+        "project_id": project.id,
+        "title": project.title,
+        "task_count": len(project.tasks),
+        "available_task_count": len(available_tasks(project)),
+        "deliverables": project.deliverables,
+        "requirements": project.requirements,
+        "rubric": [item.model_dump(mode="json") for item in project.rubric],
+        "workflow_warnings": warnings,
+        "workflow_generation_mode": generation.mode,
+    }
+
+
 @app.post("/api/demo/reset")
 def reset_demo() -> dict[str, object]:
     project = store.reset_demo()
     validate_dependency_references(project)
+    schedule_project_tasks(project, settings.auto_claim_seconds)
     return {
         "project_id": project.id,
         "title": project.title,
@@ -59,11 +169,32 @@ def get_project(project_id: str) -> dict[str, object]:
         project = store.get_project(project_id)
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error.args[0])) from error
+    if not any(task.due_date or task.available_since for task in project.tasks):
+        schedule_project_tasks(project, settings.auto_claim_seconds)
+    auto_claim_overdue_tasks(project, settings.auto_claim_seconds)
     refresh_member_workloads(project)
     return {
         **project.model_dump(mode="json"),
         "rubric_coverage": rubric_coverage(project),
     }
+
+
+@app.get("/api/projects/{project_id}/combined-result")
+def get_combined_project_result(project_id: str) -> dict[str, object]:
+    try:
+        project = store.get_project(project_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error.args[0])) from error
+    return build_combined_result(project, store.submissions)
+
+
+@app.get("/api/projects/{project_id}/combined-result")
+def get_combined_project_result(project_id: str) -> dict[str, object]:
+    try:
+        project = store.get_project(project_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error.args[0])) from error
+    return build_combined_result(project, store.submissions)
 
 
 @app.post("/api/projects/{project_id}/members", status_code=status.HTTP_201_CREATED)
@@ -82,6 +213,9 @@ def join_project(project_id: str, payload: JoinProjectRequest) -> dict[str, obje
 def get_available_tasks(project_id: str) -> list[dict[str, object]]:
     try:
         project = store.get_project(project_id)
+        if not any(task.due_date or task.available_since for task in project.tasks):
+            schedule_project_tasks(project, settings.auto_claim_seconds)
+        auto_claim_overdue_tasks(project, settings.auto_claim_seconds)
         tasks = available_tasks(project)
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error.args[0])) from error
@@ -102,6 +236,8 @@ def get_available_tasks(project_id: str) -> list[dict[str, object]]:
                 else None
             ),
             "unlocks": task.unlocks,
+            "due_date": task.due_date,
+            "auto_claim_at": task.auto_claim_at,
         }
         for task in tasks
     ]
@@ -135,6 +271,7 @@ def member_next_action(member_id: str) -> dict[str, object]:
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error.args[0])) from error
 
+    auto_claim_overdue_tasks(project, settings.auto_claim_seconds)
     task = next(
         (
             candidate
@@ -161,6 +298,7 @@ def member_next_action(member_id: str) -> dict[str, object]:
         "execution_steps": task.execution_steps,
         "required_output": task.required_output,
         "estimated_minutes": task.estimated_minutes,
+        "due_date": task.due_date,
         "rubric_criterion": (
             criterion_for_task(project, task).model_dump(mode="json")
             if criterion_for_task(project, task)
@@ -197,7 +335,15 @@ def submit_task(task_id: str, payload: SubmitTaskRequest) -> dict[str, object]:
             detail="Task is not in a state that accepts submissions.",
         )
 
-    validation = validate_submission(task, payload.content)
+    try:
+        check = ai_service.validate_submission(
+            task=task,
+            content=payload.content,
+            force_fallback=project.id == DEMO_PROJECT_ID,
+        )
+    except (AIConfigurationError, AIServiceError) as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    validation = check.validation
     submission = store.save_submission(
         task=task,
         member=member,
@@ -213,6 +359,8 @@ def submit_task(task_id: str, payload: SubmitTaskRequest) -> dict[str, object]:
             "complete": False,
             "missing_items": validation.missing_items,
             "feedback": validation.feedback,
+            "evidence_found": validation.evidence_found,
+            "validation_mode": check.mode,
             "submission_id": submission.id,
             "newly_unlocked_tasks": [],
         }
@@ -222,16 +370,23 @@ def submit_task(task_id: str, payload: SubmitTaskRequest) -> dict[str, object]:
         member.claimed_task_ids.remove(task.id)
     refresh_member_workloads(project)
     unlocked = unlock_dependents(project, task, store.submissions)
+    combined_result = build_combined_result(project, store.submissions)
     return {
         "complete": True,
         "missing_items": [],
         "feedback": validation.feedback,
+        "evidence_found": validation.evidence_found,
+        "validation_mode": check.mode,
         "submission_id": submission.id,
         "completed_task": {"id": task.id, "title": task.title},
         "newly_unlocked_tasks": [
             {"id": candidate.id, "title": candidate.title}
             for candidate in unlocked
         ],
+        "workflow_complete": combined_result["is_complete"],
+        "combined_result": (
+            combined_result if combined_result["is_complete"] else None
+        ),
     }
 
 

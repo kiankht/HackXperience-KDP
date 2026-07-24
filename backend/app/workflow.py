@@ -1,5 +1,7 @@
 import re
 from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta, timezone
+from math import ceil
 
 from .models import (
     DependencyContext,
@@ -73,6 +75,47 @@ def is_task_available(project: Project, task: Task) -> bool:
 def available_tasks(project: Project) -> list[Task]:
     validate_dependency_references(project)
     return [task for task in project.tasks if is_task_available(project, task)]
+
+
+def schedule_project_tasks(project: Project, auto_claim_seconds: int) -> None:
+    """Attach readable task dates and auto-claim timers to a new workflow."""
+    today = date.today()
+    deadline = date.fromisoformat(project.deadline) if project.deadline else None
+    total_days = max(0, (deadline - today).days) if deadline else 0
+    count = max(1, len(project.tasks))
+    now = datetime.now(timezone.utc)
+    for index, task in enumerate(project.tasks):
+        if deadline:
+            offset = ceil(total_days * (index + 1) / count)
+            task.due_date = min(deadline, today + timedelta(days=offset)).isoformat()
+        else:
+            task.due_date = None
+        if task.status == TaskStatus.AVAILABLE:
+            task.available_since = now
+            task.auto_claim_at = now + timedelta(seconds=auto_claim_seconds)
+
+
+def auto_claim_overdue_tasks(project: Project, auto_claim_seconds: int) -> list[Task]:
+    """Lazily distribute overdue ready work to the lowest-workload members."""
+    if not project.members:
+        return []
+    now = datetime.now(timezone.utc)
+    claimed: list[Task] = []
+    for task in project.tasks:
+        if not is_task_available(project, task):
+            continue
+        if task.available_since is None:
+            task.available_since = now
+        if task.auto_claim_at is None:
+            task.auto_claim_at = task.available_since + timedelta(seconds=auto_claim_seconds)
+        if now < task.auto_claim_at:
+            continue
+        member = lowest_workload_member(project)
+        if member is None:
+            break
+        claim_task(project, task, member)
+        claimed.append(task)
+    return claimed
 
 
 def calculate_member_workload(project: Project, member_id: str) -> int:
@@ -284,6 +327,166 @@ def build_dependency_context(
     return context
 
 
+def build_combined_result(
+    project: Project,
+    submissions: dict[str, Submission],
+) -> dict[str, object]:
+    """Combine every accepted task answer into one ordered project document."""
+    members = {member.id: member.name for member in project.members}
+    sections: list[dict[str, str]] = []
+    for task in project.tasks:
+        if task.status != TaskStatus.COMPLETED or task.submission_id is None:
+            continue
+        submission = submissions.get(task.submission_id)
+        if submission is None or submission.validation_status != "complete":
+            continue
+        sections.append({
+            "task_id": task.id,
+            "task_title": task.title,
+            "submitted_by": members.get(submission.member_id, "Unknown member"),
+            "content": submission.content,
+        })
+
+    combined = f"# {project.title}\n\n" + "\n\n".join(
+        f"## {index}. {section['task_title']}\n\n"
+        f"_Completed by {section['submitted_by']}_\n\n{section['content']}"
+        for index, section in enumerate(sections, start=1)
+    )
+    return {
+        "project_id": project.id,
+        "project_title": project.title,
+        "is_complete": bool(project.tasks)
+        and all(task.status == TaskStatus.COMPLETED for task in project.tasks),
+        "completed_task_count": len(sections),
+        "total_task_count": len(project.tasks),
+        "sections": sections,
+        "combined_content": combined.rstrip(),
+    }
+
+
+def build_combined_result(
+    project: Project,
+    submissions: dict[str, Submission],
+) -> dict[str, object]:
+    """Combine every accepted task answer into one ordered project document."""
+    members = {member.id: member.name for member in project.members}
+    sections: list[dict[str, str]] = []
+    for task in project.tasks:
+        if task.status != TaskStatus.COMPLETED or task.submission_id is None:
+            continue
+        submission = submissions.get(task.submission_id)
+        if submission is None or submission.validation_status != "complete":
+            continue
+        sections.append({
+            "task_id": task.id,
+            "task_title": task.title,
+            "submitted_by": members.get(submission.member_id, "Unknown member"),
+            "content": submission.content,
+        })
+
+    combined = f"# {project.title}\n\n" + "\n\n".join(
+        f"## {index}. {section['task_title']}\n\n"
+        f"_Completed by {section['submitted_by']}_\n\n{section['content']}"
+        for index, section in enumerate(sections, start=1)
+    )
+    return {
+        "project_id": project.id,
+        "project_title": project.title,
+        "is_complete": bool(project.tasks)
+        and all(task.status == TaskStatus.COMPLETED for task in project.tasks),
+        "completed_task_count": len(sections),
+        "total_task_count": len(project.tasks),
+        "sections": sections,
+        "combined_content": combined.rstrip(),
+    }
+
+
+def build_combined_result(
+    project: Project,
+    submissions: dict[str, Submission],
+) -> dict[str, object]:
+    """Combine every accepted task answer into one ordered project document."""
+    members = {member.id: member.name for member in project.members}
+    sections: list[dict[str, str]] = []
+    for task in project.tasks:
+        if task.status != TaskStatus.COMPLETED or task.submission_id is None:
+            continue
+        submission = submissions.get(task.submission_id)
+        if submission is None or submission.validation_status != "complete":
+            continue
+        sections.append(
+            {
+                "task_id": task.id,
+                "task_title": task.title,
+                "submitted_by": members.get(submission.member_id, "Unknown member"),
+                "content": submission.content,
+            }
+        )
+
+    combined = f"# {project.title}\n\n"
+    combined += "\n\n".join(
+        (
+            f"## {index}. {section['task_title']}\n\n"
+            f"_Completed by {section['submitted_by']}_\n\n"
+            f"{section['content']}"
+        )
+        for index, section in enumerate(sections, start=1)
+    )
+    return {
+        "project_id": project.id,
+        "project_title": project.title,
+        "is_complete": bool(project.tasks)
+        and all(task.status == TaskStatus.COMPLETED for task in project.tasks),
+        "completed_task_count": len(sections),
+        "total_task_count": len(project.tasks),
+        "sections": sections,
+        "combined_content": combined.rstrip(),
+    }
+
+
+def build_combined_result(
+    project: Project,
+    submissions: dict[str, Submission],
+) -> dict[str, object]:
+    """Combine every accepted task answer into one ordered project document."""
+    members = {member.id: member.name for member in project.members}
+    sections: list[dict[str, str]] = []
+    for task in project.tasks:
+        if task.status != TaskStatus.COMPLETED or task.submission_id is None:
+            continue
+        submission = submissions.get(task.submission_id)
+        if submission is None or submission.validation_status != "complete":
+            continue
+        sections.append(
+            {
+                "task_id": task.id,
+                "task_title": task.title,
+                "submitted_by": members.get(submission.member_id, "Unknown member"),
+                "content": submission.content,
+            }
+        )
+
+    combined = f"# {project.title}\n\n"
+    combined += "\n\n".join(
+        (
+            f"## {index}. {section['task_title']}\n\n"
+            f"_Completed by {section['submitted_by']}_\n\n"
+            f"{section['content']}"
+        )
+        for index, section in enumerate(sections, start=1)
+    )
+    return {
+        "project_id": project.id,
+        "project_title": project.title,
+        "is_complete": bool(project.tasks)
+        and all(task.status == TaskStatus.COMPLETED for task in project.tasks),
+        "completed_task_count": len(sections),
+        "total_task_count": len(project.tasks),
+        "sections": sections,
+        "combined_content": combined.rstrip(),
+    }
+
+
 def unlock_dependents(
     project: Project,
     completed_task: Task,
@@ -295,6 +498,7 @@ def unlock_dependents(
             continue
         if candidate.status == TaskStatus.WAITING and dependencies_complete(project, candidate):
             candidate.status = TaskStatus.AVAILABLE
+            candidate.available_since = datetime.now(timezone.utc)
             candidate.dependency_context = build_dependency_context(
                 project, candidate, submissions
             )
