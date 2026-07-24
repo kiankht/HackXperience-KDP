@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Relay turns assignment briefs into clear, claimable next actions.">
+    <meta name="theme-color" content="#f4f6f0">
+    <title>Relay — From assignment brief to next action</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <header id="app-header" class="app-header" hidden>
+      <a class="header-brand" href="#" id="brand-home" aria-label="Relay home">
+        <span class="brand-mark" aria-hidden="true">R</span>
+        <span>Relay</span>
+      </a>
+      <nav id="app-nav" class="app-nav" aria-label="Relay navigation"></nav>
+      <div id="member-controls" class="member-controls"></div>
+    </header>
+
+    <main id="app" tabindex="-1">
+      <section class="loading-screen" aria-live="polite">
+        <span class="spinner" aria-hidden="true"></span>
+        <p>Loading Relay…</p>
+      </section>
+    </main>
+
+    <div id="global-message" class="global-message" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>
