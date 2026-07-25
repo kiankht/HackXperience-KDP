@@ -17,6 +17,7 @@ from .models import (
 from .ai_service import AIConfigurationError, AIService, AIServiceError
 from .config import Settings
 from .file_extraction import FileExtractionError, extract_uploaded_text
+from .project_builder import ensure_rubric_coverage
 from .sample_inputs import SAMPLE_ASSIGNMENT
 from .sample_data import DEMO_PROJECT_ID
 from .storage import InMemoryStorage
@@ -25,7 +26,6 @@ from .workflow import (
     available_tasks,
     build_combined_result,
     claim_task,
-    build_combined_result,
     criterion_for_task,
     refresh_member_workloads,
     rubric_coverage,
@@ -198,6 +198,7 @@ def get_project(project_id: str) -> dict[str, object]:
         project = store.get_project(project_id)
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error.args[0])) from error
+    ensure_rubric_coverage(project)
     if not any(task.due_date or task.available_since for task in project.tasks):
         schedule_project_tasks(project, settings.auto_claim_seconds)
     auto_claim_overdue_tasks(project, settings.auto_claim_seconds)

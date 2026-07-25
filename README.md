@@ -2,271 +2,214 @@
 
 **From assignment brief to next action.**
 
-Relay is a focused HackXperience 2026 workflow-automation MVP for student group
-assignments. Students often lose time deciding how to begin, dividing vague work,
-understanding dependencies, and passing completed work to the next person.
+Relay is a collaborative assignment workflow app built for HackXperience 2026.
+It reads an assignment brief and marking rubric, identifies what the group must
+produce, and divides the work into small dependency-aware tasks. Members claim
+ready tasks, submit their part, and pass accepted work into the next task. Relay
+combines the completed parts into one final assignment result.
 
-Relay turns an assignment brief into specific, claimable, dependency-aware actions.
-Each member receives one clear next action, and completed submissions can be checked
-and passed automatically into the context of dependent work.
+## What Relay currently does
 
-## Current Stage 5 capabilities
+- Creates assignments from pasted text or uploaded PDF, DOCX, and TXT files.
+- Analyses briefs and rubrics with Azure OpenAI or OpenAI.
+- Generates an editable draft rubric when no official rubric is available.
+- Lets users review and correct the extracted details before creating a workflow.
+- Produces 6–12 assignment-specific tasks with objectives, steps, outputs,
+  estimates, dependencies, and rubric links.
+- Lets members join by name, claim available work, and switch between members.
+- Checks submissions before unlocking dependent tasks.
+- Passes accepted answers and context to the next member automatically.
+- Combines all accepted task answers into one final result.
+- Keeps multiple assignments in the same running Relay session.
+- Provides an Assignment menu for creating, demoing, and switching projects.
+- Shows statistics for current and previous assignments.
+- Includes **RelyRelay.ai**, a resizable assignment-focused chatbot with rotating
+  suggested questions and project-aware responses.
+- Includes a deterministic demo and fallback workflow when live AI is unavailable.
+- Provides Back controls throughout the main workflow.
+- Provides **Reset Everything** for clearing all assignments, members, and work.
+- Runs as one FastAPI service that serves both the website and API.
 
-- Create a project by uploading or pasting an assignment brief and marking rubric
-- Text extraction from PDF, DOCX, and UTF-8 TXT files
-- Real OpenAI assignment analysis, workflow generation, and submission checking when configured
-- Strict structured-output parsing with Pydantic models
-- Validated AI task graphs with one repair attempt and deterministic fallback
-- Rule-based analysis, workflow generation, and submission checking without an API key
-- Editable confirmation of every extracted project detail
-- Assignment-specific dependency-aware generation of 6 to 12 executable tasks in AI mode
-- Tailored prototype, report, presentation, and repository phases when relevant
-- A safe generic workflow fallback when a tailored workflow cannot be validated
-- The complete fixed Stage 3 demo remains available through **Start Demo**
+## Main workflow
 
-- One-process FastAPI application serving the API and landing page
-- Repeatable nine-task demonstration project with parallel branches
-- Name-only project joining with case-insensitive duplicate prevention
-- Complete browser-based demo flow with no API documentation required
-- Available-task cards with estimated time, output, rubric, and unlock information
-- One focused next-action view with objective, first action, steps, and output
-- Incomplete and valid demo-submission helpers
-- Inline revision feedback that preserves editable submission content
-- Prominent completion-to-handoff result
-- Member switching without resetting project progress
-- Visible dependency context containing the prior member and exact submitted work
-- Workflow overview with owners, dependencies, statuses, and rubric coverage
-- Responsive laptop and mobile layouts
-- Dependency-aware task availability and claiming
-- One active next action per member
-- Transparent, task-specific deterministic submission checks
-- Revision feedback for incomplete submissions
-- Automatic dependent-task unlocking
-- Structured submission context passed into newly unlocked tasks
-- Current-workload calculation, advisory imbalance warnings, and fair assignment logic
-- Rubric coverage without double-counting criteria
-- Focused API and workflow-engine tests
+1. Open **Assignments** and choose **New Assignment**, or select
+   **Create From Assignment** on the home screen.
+2. Upload or paste the assignment brief.
+3. Upload or paste the marking rubric. If there is no rubric, select
+   **Generate Rubric** and review Relay’s draft.
+4. Select **Analyse Assignment**.
+5. Review the title, deadline, deliverables, requirements, rubric criteria, and
+   marks on **Check what Relay found**.
+6. Select **Confirm and Build Workflow**.
+7. Join the assignment using a member name.
+8. Claim an available task and complete its required output.
+9. Submit the answer. Relay either requests revisions or accepts it and unlocks
+   the next work.
+10. Open **Combined Result** after work has been accepted to view the assembled
+    assignment draft.
 
-The fixed demo is always deterministic. Custom projects use OpenAI when configured
-and safely fall back to Stage 4 rules when AI is unavailable in `auto` mode.
+## Main areas
 
-## AI configuration
+- **My Work** — the current member’s next action and submission area.
+- **Workflow** — every task, owner, dependency, status, and rubric connection.
+- **Statistics** — progress summaries across all assignments in the running app.
+- **Assignments** — create a new assignment, start the demo, or switch projects.
+- **RelyRelay.ai** — help based on the current assignment, workflow, rubric,
+  submissions, and Relay features.
 
-Relay uses the official OpenAI Python SDK and the Responses API structured-output
-helper:
+## AI providers
 
-```python
-client.responses.parse(
-    model=settings.openai_model,
-    instructions=system_prompt,
-    input=untrusted_document_text,
-    text_format=PydanticResponseModel,
-)
-```
+Relay supports:
 
-The installed SDK is constrained to `openai>=2.8.0,<3`. The model is configured in
-one place through `OPENAI_MODEL`; it is not repeated throughout the application.
+- Azure OpenAI
+- OpenAI API
+- Deterministic fallback mode
 
-Create a local `.env` file from the example:
+Configuration is backend-only. Never place an API key in `frontend/app.js`,
+share it in screenshots, or commit it to GitHub.
 
-```powershell
-Copy-Item .env.example .env
-```
+Create `.env` from `.env.example` and use one of the following configurations.
 
-Then provide backend-only configuration:
+### Azure OpenAI
 
 ```dotenv
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-5.6-sol
+AI_PROVIDER=azure
+AZURE_OPENAI_ENDPOINT=https://YOUR-RESOURCE.openai.azure.com
+AZURE_OPENAI_API_KEY=YOUR_PRIVATE_KEY
+AZURE_OPENAI_DEPLOYMENT=gpt-5-mini
 AI_MODE=auto
-AI_TIMEOUT_SECONDS=45
+AI_TIMEOUT_SECONDS=120
 MAX_UPLOAD_BYTES=10485760
+AUTO_CLAIM_SECONDS=300
 ```
 
-Never commit `.env` or place the key in frontend JavaScript. `.gitignore` excludes
-all `.env` files except the placeholder-only `.env.example`.
+The deployment name must match the name shown under **Deployments** in Microsoft
+Foundry. It is not necessarily the same as the model family name.
 
-`AI_MODE` controls provider behavior:
+### OpenAI API
 
-- `auto`: use OpenAI when a key exists; otherwise fall back safely.
-- `real`: require a backend API key and return a clear error when AI is unavailable.
-- `fallback`: never call OpenAI and use deterministic behavior.
+```dotenv
+AI_PROVIDER=openai
+OPENAI_API_KEY=YOUR_PRIVATE_KEY
+OPENAI_MODEL=gpt-5.6-sol
+AI_MODE=auto
+AI_TIMEOUT_SECONDS=120
+MAX_UPLOAD_BYTES=10485760
+AUTO_CLAIM_SECONDS=300
+```
 
-The prompts treat assignment files and submissions as untrusted data. Document
-instructions cannot change Relay's system behavior, reveal secrets, alter the
-structured schema, or trigger unrelated tools.
+### AI modes
 
-## File upload
-
-Both assignment and rubric sections accept:
-
-- Text-based PDF
-- DOCX, including paragraphs and table-cell text
-- UTF-8 TXT
-
-The default maximum is 10 MB per file. Files are validated by extension, content
-type, size, and basic format signatures, processed in memory, and never stored
-permanently. Extracted text is shown in the existing textarea and remains editable.
-Pasted text continues to work independently of uploads.
-
-Image files and OCR are not supported. Image-only PDFs return a readable message
-asking the student to paste the text or use a text-based PDF.
-
-## Create a Project From Assignment Text
-
-1. Select **Create From Assignment**.
-2. Upload or paste the assignment brief.
-3. Upload or paste the marking rubric.
-4. Select **Analyse Assignment**.
-5. Review and edit the extracted deliverables, requirements, and rubric criteria.
-6. Select **Confirm and Build Workflow**.
-7. Join using only a name.
-8. Claim a starting task.
-
-Use **Fill Sample Assignment** for a repeatable quick demonstration. The sample is
-served by the backend and describes an original IT assignment for an agentic
-workflow prototype.
-
-When AI is ready, Relay returns strict structured findings. In fallback mode,
-transparent text rules recognise heading-like titles, labelled dates, common
-deliverables, requirement statements, bullets, and rubric marks. Students always
-confirm and correct the information before a project is stored.
-
-AI workflows are never stored directly. Relay validates task counts, unique IDs,
-rubric links, dependencies, unlock symmetry, cycles, self-dependencies, starting
-tasks, outputs, first actions, and execution steps. Server-owned project IDs,
-ownership, statuses, submissions, and dependency context are added only after the
-graph passes validation.
-
-## Quick Demos
-
-### Custom assignment
-
-1. Configure `.env`, restart Relay, and confirm **AI workflow generation ready**.
-2. Select **Create From Assignment**, then upload a supported file or use
-   **Fill Sample Assignment**.
-3. Analyse the sample and edit any extracted item.
-4. Confirm and build the workflow.
-5. Join as `Kian`, claim a starting task, and submit the required output.
-6. Switch members and claim the newly unlocked task to verify passed context.
-
-When no API key is available, the same journey uses fallback analysis and tasks:
-
-1. Leave `OPENAI_API_KEY` empty and keep `AI_MODE=auto`.
-2. Upload or paste the sample assignment and rubric.
-3. Confirm the fallback analysis and workflow badges.
-4. Join as `Kian`, claim **Research the core problem**, and use the labelled demo
-   submission helper.
-5. Switch members, join as `Ping`, and claim the newly unlocked analysis task.
-6. Confirm Kian's accepted work appears under **Work passed to you**.
-
-### Fixed demo
-
-1. Select **Start Demo**.
-2. Join as `Ping` and claim **Research the student pain point**.
-3. Use **Fill Incomplete Example** to see specific revision feedback.
-4. Use **Fill Demo Submission** and resubmit to unlock the analysis task.
-5. Switch members, join as `Kian`, and claim the analysis task.
-6. Confirm Ping's exact accepted submission appears as dependency context.
-
-## Technology stack
-
-- Python 3.12+
-- FastAPI
-- Uvicorn
-- Pydantic
-- Plain HTML, CSS, and JavaScript
-- Pytest and HTTPX
+- `auto` — use the configured live provider and fall back safely if it fails.
+- `real` — require live AI and return an error when the provider is unavailable.
+- `fallback` — never contact an AI provider.
 
 ## Share Relay as a website
 
-Relay includes a Render Blueprint, so friends can use it through one public
-website link without installing Python or running PowerShell.
+Relay includes [render.yaml](render.yaml), which deploys the frontend and FastAPI
+backend together as one Render web service.
 
-1. Push the latest repository changes to GitHub.
+1. Push the current repository to GitHub.
 2. Open [Render Blueprints](https://dashboard.render.com/blueprints).
-3. Select **New Blueprint Instance** and connect the
-   `kiankht/HackXperience-KDP` repository.
-4. When Render asks for secret values, paste:
-   - `AZURE_OPENAI_ENDPOINT` from the local `.env`
-   - `AZURE_OPENAI_API_KEY` from the local `.env`
-5. Select **Deploy Blueprint**.
-6. Open the generated `relay-app.onrender.com` address and share that link.
+3. Select **New Blueprint Instance**.
+4. Connect `kiankht/HackXperience-KDP`.
+5. Enter `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY` when Render requests
+   the secret values.
+6. Select **Deploy Blueprint**.
+7. Share the generated `onrender.com` address.
 
-The Azure key stays in Render and is never sent to the browser or committed to
-GitHub. New commits to the connected GitHub branch deploy automatically.
+Use the Render address—not a GitHub Pages address. GitHub Pages can host the
+interface but cannot run Relay’s Python backend.
 
-Render's free web service sleeps after inactivity. The first request after sleep
-can take about a minute, and Relay's current in-memory assignments reset whenever
-the service restarts. Use the free deployment for demonstrations and testing;
-add a persistent database before relying on it for long-lived assignment history.
+Render automatically deploys new commits from the connected branch. The free
+service sleeps after inactivity, so its first visit can take around one minute.
+The current data store is in memory, so assignments reset whenever the server
+restarts, redeploys, or sleeps.
 
-## Assignment API
+## Run locally
 
-### Get the sample
+Requirements:
 
-```http
-GET /api/samples/assignment
+- Python 3.12+
+- Internet access for live AI
+
+From the repository root:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r .\backend\requirements.txt
+Copy-Item .env.example .env
+.\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --reload
 ```
 
-### Analyse pasted text
+Open [http://localhost:8000](http://localhost:8000).
 
-```http
-POST /api/assignments/analyze
-Content-Type: application/json
+Virtual-environment activation is optional because the commands use its Python
+executable directly.
+
+## Tests
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest
 ```
 
-```json
-{
-  "title": "Optional assignment title",
-  "deadline": "2026-08-15",
-  "assignment_brief": "The complete pasted assignment brief...",
-  "rubric_text": "Research quality — 20 marks..."
-}
-```
+The tests force fallback mode so they do not use paid AI quota.
 
-The response contains `suggested_title`, `suggested_deadline`, `deliverables`,
-`requirements`, `rubric`, `extraction_warnings`, and source character counts.
-Analysis is read-only and does not create a project.
+## File uploads
 
-### Create from confirmed analysis
+Supported:
 
-```http
-POST /api/projects/from-analysis
-Content-Type: application/json
-```
+- Text-based PDF
+- DOCX
+- UTF-8 TXT
+- Maximum 10 MB by default
 
-```json
-{
-  "title": "Agentic Workflow Automation Prototype",
-  "deadline": "2026-08-15",
-  "deliverables": ["Working prototype", "Presentation"],
-  "requirements": ["Build and test the central workflow"],
-  "rubric": [
-    {
-      "id": "rubric-implementation",
-      "criterion": "Technical implementation",
-      "description": "Functionality of the prototype",
-      "marks": 100
-    }
-  ],
-  "original_assignment_brief": "The complete pasted assignment brief...",
-  "original_rubric_text": "Technical implementation — 100 marks"
-}
-```
+Relay validates file type, size, and basic format signatures. Uploaded documents
+are processed in memory and are not saved as permanent files. Image-only PDFs
+and image files are not OCR-processed; paste their text instead.
 
-The response includes the new project ID, task counts, confirmed information, and
-any workflow fallback warning. The project then uses the same join, claim,
-submission, unlocking, context-handoff, workflow, and rubric-coverage endpoints as
-the fixed demo.
+Do not upload passwords, API keys, private identification documents, or other
+sensitive information.
 
-## Repository structure
+## API
+
+Interactive API documentation is available at `/docs` while Relay is running.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/health` | Check whether the backend is running |
+| `GET` | `/api/ai/status` | Read non-secret AI readiness |
+| `GET` | `/api/samples/assignment` | Load the sample assignment |
+| `POST` | `/api/files/extract` | Extract text from PDF, DOCX, or TXT |
+| `POST` | `/api/assignments/analyze` | Analyse an assignment and rubric |
+| `POST` | `/api/assignments/generate-rubric` | Draft a rubric from a brief |
+| `POST` | `/api/projects/from-analysis` | Create an assignment workflow |
+| `GET` | `/api/projects` | List statistics for every assignment |
+| `GET` | `/api/projects/{project_id}` | Read an assignment and workflow |
+| `GET` | `/api/projects/{project_id}/combined-result` | Assemble accepted answers |
+| `POST` | `/api/projects/{project_id}/chat` | Ask RelyRelay.ai |
+| `POST` | `/api/projects/{project_id}/members` | Join by name |
+| `GET` | `/api/projects/{project_id}/available-tasks` | List claimable tasks |
+| `POST` | `/api/tasks/{task_id}/claim` | Claim a task |
+| `GET` | `/api/members/{member_id}/next-action` | Read a member’s current task |
+| `POST` | `/api/tasks/{task_id}/submit` | Check and submit work |
+| `POST` | `/api/demo/reset` | Restart the demo only |
+| `POST` | `/api/reset-all` | Clear all Relay data |
+
+## Task statuses
+
+- **Available** — all dependencies are complete and the task can be claimed.
+- **Waiting** — one or more dependencies are incomplete.
+- **In progress** — a member has claimed the task.
+- **Needs revision** — the submission is missing required components.
+- **Completed** — the answer was accepted and passed forward.
+
+## Project structure
 
 ```text
 .
 ├── backend/
 │   ├── app/
-│   │   ├── __init__.py
 │   │   ├── ai_models.py
 │   │   ├── ai_service.py
 │   │   ├── analysis.py
@@ -276,6 +219,7 @@ the fixed demo.
 │   │   ├── models.py
 │   │   ├── project_builder.py
 │   │   ├── prompts.py
+│   │   ├── reports.py
 │   │   ├── sample_data.py
 │   │   ├── sample_inputs.py
 │   │   ├── storage.py
@@ -286,233 +230,55 @@ the fixed demo.
 │   ├── app.js
 │   └── style.css
 ├── tests/
-│   ├── test_assignment_flow.py
-│   ├── test_health.py
-│   ├── test_stage5.py
-│   └── test_workflow.py
 ├── .env.example
-├── .gitignore
+├── render.yaml
 └── README.md
 ```
 
-## Windows PowerShell setup
+## Current limitations
 
-Open PowerShell and move to the repository root:
-
-```powershell
-Set-Location 'D:\WINDOW FOLDER\Documents\HackXperience 2026'
-```
-
-Create one virtual environment at the repository root:
-
-```powershell
-py -m venv .venv
-```
-
-If `py` is unavailable or points to a broken installation, use a confirmed Python
-executable:
-
-```powershell
-& 'C:\Users\ASUS\AppData\Local\Programs\Python\Python312\python.exe' -m venv .venv
-```
-
-Install dependencies using the virtual environment's Python:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r .\backend\requirements.txt
-```
-
-Start Relay:
-
-```powershell
-.\.venv\Scripts\python.exe -m uvicorn backend.app.main:app --reload
-```
-
-Open [http://localhost:8000](http://localhost:8000) in a browser.
-
-Run the tests:
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest
-```
-
-## Quick Demo
-
-1. Press **Start Demo**.
-2. Join as **Ping**.
-3. Claim **Research the student pain point**.
-4. Press **Fill Incomplete Example**, then submit.
-5. Review the missing requirements.
-6. Press **Fill Demo Submission**, then resubmit.
-7. Observe the prominent automatic handoff.
-8. Press **Switch Member**.
-9. Join as **Kian**.
-10. Claim **Analyse the student pain point**.
-11. View Ping's accepted work under **Work passed to you**.
-12. Open **Workflow** to see owners, status, dependencies, and rubric coverage.
-
-The demo helpers contain deterministic sample text for presentation convenience.
-They are clearly labelled and do not represent genuine student work.
-
-## Task statuses
-
-- **Available:** all dependencies are complete and the task can be claimed.
-- **Waiting:** at least one dependency is incomplete.
-- **In progress:** a member has claimed the task.
-- **Needs revision:** the submitted work is missing minimum required components.
-- **Completed:** the submission was accepted and eligible work was handed forward.
-
-## Reset Demo
-
-Use **Reset Demo** in the application header to clear all in-memory members,
-claims, submissions, completions, and handoff context. Confirming the reset recreates
-the original nine-task project and returns the interface to name-only joining.
-
-## Deterministic demo API
-
-The interactive API documentation is available at
-[http://localhost:8000/docs](http://localhost:8000/docs) while Relay is running.
-
-Main endpoints:
-
-| Method | Endpoint | Purpose |
-| --- | --- | --- |
-| `GET` | `/api/health` | Check the Relay backend |
-| `GET` | `/api/ai/status` | Read non-secret AI readiness and fallback status |
-| `POST` | `/api/files/extract` | Extract editable text from PDF, DOCX, or TXT |
-| `GET` | `/api/samples/assignment` | Get the repeatable sample assignment |
-| `POST` | `/api/assignments/analyze` | Analyse pasted text without storing a project |
-| `POST` | `/api/projects/from-analysis` | Build a project from confirmed information |
-| `POST` | `/api/demo/reset` | Recreate the deterministic demo project |
-| `GET` | `/api/projects/{project_id}` | Read project, workflow, and rubric coverage |
-| `POST` | `/api/projects/{project_id}/members` | Join using only a name |
-| `GET` | `/api/projects/{project_id}/available-tasks` | List tasks ready to claim |
-| `POST` | `/api/tasks/{task_id}/claim` | Claim an available task |
-| `GET` | `/api/members/{member_id}/next-action` | Read the member's active task |
-| `POST` | `/api/tasks/{task_id}/submit` | Validate, complete, and hand off work |
-
-Resetting the demo returns the stable project ID `project-relay-demo`. In-memory
-data is also reset whenever the server restarts.
-
-## Sample API flow
-
-With Relay running, use a second PowerShell window:
-
-```powershell
-$project = Invoke-RestMethod `
-  -Method Post `
-  -Uri 'http://localhost:8000/api/demo/reset'
-
-$member = Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://localhost:8000/api/projects/$($project.project_id)/members" `
-  -ContentType 'application/json' `
-  -Body '{"name":"Kian"}'
-
-$available = Invoke-RestMethod `
-  -Uri "http://localhost:8000/api/projects/$($project.project_id)/available-tasks"
-
-$claim = Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://localhost:8000/api/tasks/$($available[0].id)/claim" `
-  -ContentType 'application/json' `
-  -Body (@{ member_id = $member.id } | ConvertTo-Json)
-
-$nextAction = Invoke-RestMethod `
-  -Uri "http://localhost:8000/api/members/$($member.id)/next-action"
-```
-
-Research submissions use this predictable minimum structure:
-
-```text
-Source 1:
-Link: https://example.edu/source-1
-Summary: A sufficiently detailed summary.
-Relevance: How the evidence relates to Relay.
-
-Source 2:
-Link: https://example.edu/source-2
-Summary: A sufficiently detailed summary.
-Relevance: How the evidence relates to Relay.
-
-Source 3:
-Link: https://example.edu/source-3
-Summary: A sufficiently detailed summary.
-Relevance: How the evidence relates to Relay.
-```
-
-Relay checks only the required structure and minimum detail. It does not grade
-academic quality or replace lecturer feedback.
-
-## Screenshots
-
-Screenshot placeholders:
-
-- Landing and demo start
-- Focused next action
-- Incomplete-submission feedback
-- Automatic handoff result
-- Dependency context received by the next member
-- Workflow overview
-
-## Known limitations
-
-- Real AI requires an API key and internet access.
-- AI output can be imperfect and must be reviewed before project creation.
-- Complex rubric tables may require manual correction.
-- Only text-based PDF, DOCX, and UTF-8 TXT files are supported.
-- Image-only PDFs are not OCR-processed; PNG, JPG, and JPEG are not supported.
-- Data is stored in memory and resets when the server process restarts.
-- There is no authentication or persistent multi-device collaboration.
-- AI and fallback submission checks assess required structure and completion, not
-  academic correctness, factual accuracy, or grades.
-- Relay does not replace lecturer feedback or guarantee grades.
-- The fixed Start Demo path deliberately uses deterministic data and validation.
-
-## Environment variables
-
-Copy `.env.example` to `.env` only when environment-specific configuration is
-needed. Stage 5 uses OpenAI only when configured and never requires an API key for
-the deterministic demo or fallback mode.
+- Assignment history is stored in server memory, not a permanent database.
+- Render restarts and free-tier sleep erase current assignments and submissions.
+- There is no password-based authentication or private account system.
+- Anyone with the shared website link can use the running Relay instance.
+- Joining by name is intended for demonstrations and trusted student groups.
+- AI-generated analysis, rubrics, workflows, and feedback can be imperfect and
+  must be reviewed by students.
+- A generated rubric is a draft, not an official lecturer rubric.
+- Submission checking verifies required structure and completion; it does not
+  guarantee factual accuracy, academic quality, or grades.
+- Uploaded files are limited to extractable text; OCR is not included.
 
 ## Troubleshooting
 
-### `py` works but `python` does not
+### The website briefly shows “Not Found”
 
-Use `py` to create the environment, then use the environment's explicit Python
-path for all later commands:
+Wait for the free Render service to wake, then refresh. Confirm the address ends
+in `onrender.com`. The current server sends the homepage with no-cache headers
+and restores Relay for refreshed browser routes.
 
-```powershell
-py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r .\backend\requirements.txt
-```
+### Relay says the deployment is out of date
 
-### Windows Store Python alias problems
+Push the latest commit to GitHub, open the Render service, and confirm the newest
+deployment succeeded.
 
-If `python` opens the Store or reports an inaccessible installation, disable the
-`python.exe` and `python3.exe` App Installer aliases in **Settings → Apps →
-Advanced app settings → App execution aliases**. Alternatively, invoke a known
-installation by its full path.
+### Live AI is unavailable
 
-### Virtual-environment activation problems
+Open `/api/ai/status` on the running website. Confirm the provider is `azure`,
+`configured` is `true`, and the deployment name matches Microsoft Foundry.
+Check the Render environment values without exposing them publicly.
 
-Activation is optional because every command above uses the environment's Python
-directly. If activation is preferred and PowerShell blocks it, allow scripts only
-for the current process:
+### PowerShell cannot find Python
 
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\.venv\Scripts\Activate.ps1
-```
-
-### Commands run from the wrong directory
-
-Confirm the current directory before setup or startup:
+Install Python 3.12 or use the full path to a known Python executable when
+creating `.venv`. After creation, use:
 
 ```powershell
-Get-Location
-git rev-parse --show-toplevel
+.\.venv\Scripts\python.exe
 ```
 
-Both should identify the cloned `HackXperience-KDP` repository. Do not
-create `.venv` inside `backend` or `backend\app`.
+### The saved assignment disappeared
+
+The current storage is intentionally in memory. A server restart, redeploy, or
+free-tier sleep clears it. Permanent cross-device history requires a database,
+which is not implemented yet.

@@ -163,6 +163,7 @@ input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--
 .field-group label span { color: var(--muted); font-size: .78rem; font-weight: 600; }
 .field-group input { margin-bottom: 0; }
 .field-meta { display: flex; justify-content: flex-end; margin-top: 5px; color: var(--muted); font-size: .74rem; }
+.field-empty-note { margin: 6px 0 0; color: var(--muted); font-size: .84rem; font-weight: 600; }
 .form-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
 .review-warning { margin-top: 24px; }
 .review-warning ul { margin-bottom: 0; }

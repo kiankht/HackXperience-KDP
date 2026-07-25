@@ -170,7 +170,9 @@ def analyze_assignment(payload: AssignmentAnalysisRequest) -> AssignmentAnalysis
     warnings: list[str] = []
     deadline = payload.deadline or _parse_date(payload.assignment_brief)
     if deadline is None:
-        warnings.append("No explicit deadline was found.")
+        warnings.append(
+            "Deadline not mentioned by the user or in the assignment document."
+        )
 
     deliverables = _extract_deliverables(payload.assignment_brief)
     if not deliverables:

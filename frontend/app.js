@@ -565,13 +565,15 @@ function assignmentField(name, label, value, options = {}) {
   const textarea = options.textarea;
   const max = options.max || 160;
   const required = options.required ? "required" : "";
-  const describedBy = `${name}-error${textarea ? ` ${name}-count` : ""}`;
+  const emptyNoteId = options.emptyNote ? `${name}-empty-note` : "";
+  const describedBy = `${name}-error${textarea ? ` ${name}-count` : ""}${emptyNoteId ? ` ${emptyNoteId}` : ""}`;
   return `<div class="field-group">
     <label for="${name}">${label}${options.optional ? " <span>(optional)</span>" : ""}</label>
     ${textarea
       ? `<textarea id="${name}" name="${name}" rows="${options.rows || 8}" maxlength="${max}" ${required} aria-describedby="${describedBy}">${escapeHtml(value)}</textarea>
          <div class="field-meta"><span id="${name}-count">${value.length.toLocaleString()} / ${max.toLocaleString()}</span></div>`
       : `<input id="${name}" name="${name}" type="${options.type || "text"}" maxlength="${max}" value="${escapeHtml(value)}" ${options.min ? `min="${escapeHtml(options.min)}"` : ""} ${required} aria-describedby="${describedBy}">`}
+    ${options.emptyNote ? `<p id="${emptyNoteId}" class="field-empty-note">${escapeHtml(options.emptyNote)}</p>` : ""}
     <p id="${name}-error" class="form-error" role="alert"></p>
   </div>`;
 }
@@ -864,7 +866,12 @@ function showAnalysisReview() {
     <form id="review-form" novalidate>
       <section class="card review-section"><h2>Project details</h2><div class="two-column-fields">
         ${assignmentField("review-title-input", "Title", result.suggested_title, { max: 160, required: true })}
-        ${assignmentField("review-deadline", "Deadline", result.suggested_deadline || "", { optional: true, type: "date", min: localToday() })}
+        ${assignmentField("review-deadline", "Deadline", result.suggested_deadline || "", {
+          optional: true,
+          type: "date",
+          min: localToday(),
+          emptyNote: result.suggested_deadline ? "" : "Not mentioned",
+        })}
       </div></section>
       <section class="card review-section"><div class="section-heading"><div><h2>Deliverables</h2><p>What the group must produce.</p></div><button class="button tertiary" type="button" id="add-deliverable">Add deliverable</button></div>
         <div id="deliverables-list">${editableList(result.deliverables, "deliverable")}</div></section>
@@ -1222,7 +1229,7 @@ function renderTaskCard(task) {
       <div><dt>Work style</dt><dd>${escapeHtml(capitalise(task.work_style))}</dd></div>
       <div><dt>Rubric</dt><dd>${rubric ? `${escapeHtml(rubric.criterion)} — ${rubric.marks} marks` : "Not linked"}</dd></div>
       <div><dt>Submit</dt><dd>${escapeHtml(task.required_output.join(" · "))}</dd></div>
-      <div><dt>Due</dt><dd>${task.due_date ? formatDate(task.due_date) : "No project deadline"}</dd></div>
+      <div><dt>Due</dt><dd>${task.due_date ? formatDate(task.due_date) : "Not mentioned"}</dd></div>
       <div><dt>Claim timer</dt><dd><span data-auto-claim-at="${escapeHtml(task.auto_claim_at || "")}">${escapeHtml(autoClaimText(task.auto_claim_at))}</span></dd></div>
       <div><dt>Unlocks</dt><dd>${task.unlocks.length ? task.unlocks.map(taskTitle).map(escapeHtml).join(", ") : "Final task"}</dd></div>
     </dl>
@@ -1514,7 +1521,7 @@ function renderStatistics() {
             <div class="stats-card-heading"><div>
               <span class="status-badge ${project.is_complete ? "completed" : "in_progress"}">${project.is_complete ? "Finished" : "Active"}</span>
               <h2>${escapeHtml(project.title)}</h2>
-              <p>${project.project_id === state.projectId ? "Current assignment" : "Other assignment"}${project.deadline ? ` · due ${formatDate(project.deadline)}` : ""}</p>
+              <p>${project.project_id === state.projectId ? "Current assignment" : "Other assignment"} · ${project.deadline ? `due ${formatDate(project.deadline)}` : "deadline not mentioned"}</p>
             </div><strong class="progress-number">${project.progress_percent}%</strong></div>
             <div class="progress-track" aria-label="${project.progress_percent}% complete"><i style="width:${project.progress_percent}%"></i></div>
             <dl>
@@ -1552,7 +1559,7 @@ function renderWorkflow() {
   app.innerHTML = `
     <section class="wide-view workflow-view" aria-labelledby="workflow-title">
       <div class="view-heading"><div><p class="eyebrow">Dependency-aware plan</p><h1 id="workflow-title">${escapeHtml(state.project.title)}</h1>
-        <p class="lead">${state.project.deadline ? `Deadline ${formatDate(state.project.deadline)}` : "No deadline set"} · ${state.project.tasks.length} executable tasks</p></div>
+        <p class="lead">${state.project.deadline ? `Deadline ${formatDate(state.project.deadline)}` : "Deadline not mentioned"} · ${state.project.tasks.length} executable tasks</p></div>
         <div class="workflow-heading-actions">
           ${state.project.tasks.some((task) => task.status === "completed") ? `<button class="button secondary" id="workflow-combined">View Combined Result</button>` : ""}
           ${state.memberId ? `<button class="button primary" id="workflow-tasks">Choose Available Work</button>` : `<button class="button primary" id="workflow-join">Join Project</button>`}
@@ -1566,7 +1573,7 @@ function renderWorkflow() {
           <div><dt>Available</dt><dd>${coverage.available_marks}</dd></div>
           <div><dt>Waiting</dt><dd>${coverage.waiting_marks}</dd></div>
         </dl>
-        ${coverage.uncovered_criteria.length ? `<p class="form-error">Uncovered: ${coverage.uncovered_criteria.map((item) => escapeHtml(item.criterion)).join(", ")}</p>` : `<p class="coverage-note">Every rubric criterion is connected to workflow tasks.</p>`}
+        ${coverage.uncovered_criteria.length ? `<p class="coverage-note">Not yet linked to a task: ${coverage.uncovered_criteria.map((item) => escapeHtml(item.criterion)).join(", ")}</p>` : `<p class="coverage-note">Every rubric criterion is connected to workflow tasks.</p>`}
       </section>
       <section class="workflow-list" aria-label="Project workflow">
         ${state.project.tasks.map((task, index) => `<article class="workflow-item">
@@ -1577,7 +1584,7 @@ function renderWorkflow() {
             <dl class="workflow-meta">
               <div><dt>Owner</dt><dd>${escapeHtml(memberName(task.claimed_by))}</dd></div>
               <div><dt>Rubric</dt><dd>${escapeHtml(rubricMap[task.rubric_id]?.criterion || "Not linked")}</dd></div>
-              <div><dt>Due</dt><dd>${task.due_date ? formatDate(task.due_date) : "No project deadline"}</dd></div>
+              <div><dt>Due</dt><dd>${task.due_date ? formatDate(task.due_date) : "Not mentioned"}</dd></div>
               <div><dt>Depends on</dt><dd>${task.dependencies.length ? task.dependencies.map(taskTitle).map(escapeHtml).join(", ") : "Can begin immediately"}</dd></div>
               <div><dt>Unlocks</dt><dd>${task.unlocks.length ? task.unlocks.map(taskTitle).map(escapeHtml).join(", ") : "Final task"}</dd></div>
             </dl>

@@ -15,6 +15,9 @@ and rubric into concise structured project information.
 Rules:
 - Do not invent requirements absent from the source.
 - Preserve explicit deliverables, numerical requirements, and clearly stated dates.
+- For the deadline, use the user-provided deadline first. If the user did not
+  provide one, extract an explicit deadline from the assignment document. If
+  neither source contains a deadline, return suggested_deadline=null.
 - Never guess a missing deadline or silently force rubric marks to total 100.
 - Avoid duplicate deliverables, requirements, and rubric criteria.
 - Keep requirements concise and actionable.

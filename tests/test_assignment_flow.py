@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from backend.app.analysis import analyze_assignment
 from backend.app.main import app, store
 from backend.app.models import AssignmentAnalysisRequest, TaskStatus
-from backend.app.project_builder import validate_generated_workflow
+from backend.app.project_builder import ensure_rubric_coverage, validate_generated_workflow
 
 
 client = TestClient(app)
@@ -114,7 +114,11 @@ def test_missing_deadline_produces_warning() -> None:
         "Deadline: 15 August 2026", ""
     )
     result = client.post("/api/assignments/analyze", json=payload).json()
-    assert "No explicit deadline was found." in result["extraction_warnings"]
+    assert result["suggested_deadline"] is None
+    assert (
+        "Deadline not mentioned by the user or in the assignment document."
+        in result["extraction_warnings"]
+    )
 
 
 def test_rubric_can_be_generated_from_assignment_without_rubric_file() -> None:
@@ -193,6 +197,20 @@ def test_confirmed_analysis_creates_valid_dependency_aware_project() -> None:
         assert deliverable.rstrip(".") in task_text
     assert all(task.due_date for task in project.tasks)
     assert max(task.due_date for task in project.tasks) <= project.deadline
+
+
+def test_workflow_relinks_spare_tasks_to_cover_every_rubric_criterion() -> None:
+    project_id, _ = create_custom_project()
+    project = store.get_project(project_id)
+    first_rubric_id = project.rubric[0].id
+    for task in project.tasks:
+        task.rubric_id = first_rubric_id
+
+    assert ensure_rubric_coverage(project) == []
+    assert {task.rubric_id for task in project.tasks} == {
+        criterion.id for criterion in project.rubric
+    }
+    validate_generated_workflow(project)
 
 
 def test_overdue_unclaimed_task_is_automatically_assigned() -> None:

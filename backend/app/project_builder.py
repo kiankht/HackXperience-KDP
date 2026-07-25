@@ -7,6 +7,56 @@ from .models import ConfirmedProjectRequest, Project, RubricCriterion, Task, Tas
 from .workflow import validate_dependency_references
 
 
+def _words(value: str) -> set[str]:
+    ignored = {
+        "and", "for", "from", "into", "the", "this", "that", "with",
+        "quality", "correctness", "content", "submission",
+    }
+    return {
+        word
+        for word in re.findall(r"[a-z0-9_]+", value.casefold())
+        if len(word) >= 3 and word not in ignored
+    }
+
+
+def ensure_rubric_coverage(project: Project) -> list[str]:
+    """Relink spare tasks so every criterion has a task when capacity allows."""
+    counts = {
+        criterion.id: sum(task.rubric_id == criterion.id for task in project.tasks)
+        for criterion in project.rubric
+    }
+    uncovered = [criterion for criterion in project.rubric if counts[criterion.id] == 0]
+    for criterion in uncovered:
+        candidates = [
+            task for task in project.tasks
+            if counts.get(task.rubric_id, 0) > 1
+        ]
+        if not candidates:
+            break
+        criterion_words = _words(f"{criterion.criterion} {criterion.description}")
+
+        def relevance(task: Task) -> tuple[int, int]:
+            task_words = _words(
+                " ".join([
+                    task.title,
+                    task.description,
+                    task.objective,
+                    *task.required_output,
+                    *task.execution_steps,
+                ])
+            )
+            return len(criterion_words & task_words), project.tasks.index(task)
+
+        selected = max(candidates, key=relevance)
+        counts[selected.rubric_id] -= 1
+        selected.rubric_id = criterion.id
+        counts[criterion.id] += 1
+    return [
+        criterion.id for criterion in project.rubric
+        if counts[criterion.id] == 0
+    ]
+
+
 def _rubric_id(rubric: list[RubricCriterion], keywords: tuple[str, ...]) -> str:
     for item in rubric:
         text = f"{item.criterion} {item.description}".casefold()
@@ -143,6 +193,7 @@ def _build(payload: ConfirmedProjectRequest, project_id: str) -> Project:
         tasks=tasks,
         created_at=datetime.now(timezone.utc),
     )
+    ensure_rubric_coverage(project)
     validate_generated_workflow(project, minimum_tasks=6, maximum_tasks=10)
     return project
 
@@ -169,6 +220,16 @@ def validate_generated_workflow(
         expected_unlocks = {candidate.id for candidate in project.tasks if task.id in candidate.dependencies}
         if set(task.unlocks) != expected_unlocks:
             raise ValueError(f"Task '{task.id}' has inconsistent unlock relationships.")
+    uncovered = [
+        criterion.id
+        for criterion in project.rubric
+        if not any(task.rubric_id == criterion.id for task in project.tasks)
+    ]
+    if uncovered and len(project.rubric) <= len(project.tasks):
+        raise ValueError(
+            "Generated workflow leaves rubric criteria uncovered: "
+            + ", ".join(uncovered)
+        )
     if minimum_tasks == 6 and maximum_tasks == 10:
         if sum(task.status == TaskStatus.AVAILABLE for task in project.tasks) < 2:
             raise ValueError("Deterministic workflow must have at least two starting tasks.")
@@ -254,5 +315,6 @@ def build_project_from_ai(
         tasks=tasks,
         created_at=datetime.now(timezone.utc),
     )
+    ensure_rubric_coverage(project)
     validate_generated_workflow(project)
     return project
