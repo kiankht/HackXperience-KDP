@@ -178,6 +178,29 @@ When no API key is available, the same journey uses fallback analysis and tasks:
 - Plain HTML, CSS, and JavaScript
 - Pytest and HTTPX
 
+## Share Relay as a website
+
+Relay includes a Render Blueprint, so friends can use it through one public
+website link without installing Python or running PowerShell.
+
+1. Push the latest repository changes to GitHub.
+2. Open [Render Blueprints](https://dashboard.render.com/blueprints).
+3. Select **New Blueprint Instance** and connect the
+   `kiankht/HackXperience-KDP` repository.
+4. When Render asks for secret values, paste:
+   - `AZURE_OPENAI_ENDPOINT` from the local `.env`
+   - `AZURE_OPENAI_API_KEY` from the local `.env`
+5. Select **Deploy Blueprint**.
+6. Open the generated `relay-app.onrender.com` address and share that link.
+
+The Azure key stays in Render and is never sent to the browser or committed to
+GitHub. New commits to the connected GitHub branch deploy automatically.
+
+Render's free web service sleeps after inactivity. The first request after sleep
+can take about a minute, and Relay's current in-memory assignments reset whenever
+the service restarts. Use the free deployment for demonstrations and testing;
+add a persistent database before relying on it for long-lived assignment history.
+
 ## Assignment API
 
 ### Get the sample

@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: relay-app
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: AI_PROVIDER
+        value: azure
+      - key: AI_MODE
+        value: auto
+      - key: AI_TIMEOUT_SECONDS
+        value: "120"
+      - key: MAX_UPLOAD_BYTES
+        value: "10485760"
+      - key: AUTO_CLAIM_SECONDS
+        value: "300"
+      - key: AZURE_OPENAI_DEPLOYMENT
+        value: gpt-5-mini
+      - key: AZURE_OPENAI_ENDPOINT
+        sync: false
+      - key: AZURE_OPENAI_API_KEY
+        sync: false
