@@ -35,6 +35,12 @@ class InMemoryStorage:
             self._submission_sequence = 0
         return project
 
+    def clear_all(self) -> None:
+        self.projects = {}
+        self.submissions = {}
+        self._member_sequence = 0
+        self._submission_sequence = 0
+
     def get_project(self, project_id: str) -> Project:
         project = self.projects.get(project_id)
         if project is None:

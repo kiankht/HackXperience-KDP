@@ -240,6 +240,11 @@ function clearCurrentSession() {
   state.workloadWarning = null;
   state.workflowWarnings = [];
   state.workflowGenerationMode = null;
+  state.projectStatistics = [];
+  state.combinedResult = null;
+  state.chatHistory = [];
+  state.chatProjectId = null;
+  state.lastClickedSuggestion = null;
 }
 
 function projectTask(taskId) {
@@ -273,7 +278,7 @@ function renderHeader() {
     ["statistics", "Statistics"],
     ["assignments", "Assignments"],
   );
-  nav.innerHTML = `<button class="nav-link back-link" id="global-back" aria-label="Go back">← Back</button>` + items
+  nav.innerHTML = items
     .map(([view, label]) => `<button class="nav-link ${(view === "work" ? ["action", "tasks"].includes(state.view) : state.view === view) ? "active" : ""}" data-view="${view}">${label}</button>`)
     .join("");
 
@@ -299,6 +304,10 @@ async function loadProject() {
 async function navigate(view) {
   state.view = view;
   state.submissionResult = null;
+  if (["work", "action", "tasks", "workflow"].includes(view) && !state.projectId) {
+    renderNoProjectState();
+    return;
+  }
   try {
     if (view === "tasks") {
       await showAvailableTasks();
@@ -320,6 +329,35 @@ async function navigate(view) {
   } catch (error) {
     renderError(error.message, () => navigate(view));
   }
+}
+
+function renderNoProjectState() {
+  const hasUnjoinedProject = Boolean(state.projectId);
+  state.view = "no-project";
+  state.loading = false;
+  header.hidden = true;
+  chatLauncher.hidden = true;
+  app.className = "app-main";
+  app.innerHTML = `
+    <section class="empty-state card no-project-state" aria-labelledby="no-project-title">
+      <span class="empty-project-icon" aria-hidden="true">R</span>
+      <p class="eyebrow">Nothing to work on yet</p>
+      <h1 id="no-project-title">${hasUnjoinedProject ? "You haven’t joined this project" : "You haven’t created or joined a project"}</h1>
+      <p>${hasUnjoinedProject
+        ? "Join the project with your name before choosing and completing group tasks."
+        : "Create an assignment from a brief, or open the assignment menu to join an existing group project."}</p>
+      <div class="form-actions no-project-actions">
+        <button class="button primary large" id="no-project-primary">${hasUnjoinedProject ? "Join Project" : "Create Assignment"}</button>
+        <button class="button secondary large" id="no-project-assignments">View Assignments</button>
+        <button class="text-button" id="no-project-home">Return Home</button>
+      </div>
+    </section>`;
+  document.querySelector("#no-project-primary").addEventListener(
+    "click", () => hasUnjoinedProject ? showJoin() : startNewAssignment(),
+  );
+  document.querySelector("#no-project-assignments").addEventListener("click", showAssignments);
+  document.querySelector("#no-project-home").addEventListener("click", renderLanding);
+  app.focus();
 }
 
 function startNewAssignment() {
@@ -917,7 +955,7 @@ async function startDemo() {
   }
 }
 
-async function showJoin(errorMessage = "") {
+async function showJoin() {
   state.view = "join";
   state.loading = false;
   await loadProject();
@@ -932,7 +970,7 @@ async function showJoin(errorMessage = "") {
       <form id="join-form" class="card form-card" novalidate>
         <label for="member-name">Your name</label>
         <input id="member-name" name="name" type="text" autocomplete="name" maxlength="80" placeholder="e.g. Ping" aria-describedby="join-error">
-        <p id="join-error" class="form-error" role="alert">${escapeHtml(errorMessage)}</p>
+        <p id="join-error" class="form-error" role="alert"></p>
         <button class="button primary full" type="submit">Join Project</button>
         <p class="privacy-note">That’s all Relay needs — no skills, personality, or role questionnaire.</p>
       </form>
@@ -1006,6 +1044,10 @@ async function continueAfterMemberSelection() {
 }
 
 async function showAvailableTasks() {
+  if (!state.projectId) {
+    renderNoProjectState();
+    return;
+  }
   state.view = "tasks";
   setLoading("Loading tasks that are ready…");
   const [tasks] = await Promise.all([
@@ -1122,6 +1164,10 @@ async function claimTask(taskId, button) {
 }
 
 async function showNextAction() {
+  if (!state.projectId || !state.memberId) {
+    renderNoProjectState();
+    return;
+  }
   state.view = "action";
   setLoading("Loading your next action…");
   const [task] = await Promise.all([
@@ -1402,6 +1448,10 @@ function renderStatistics() {
 }
 
 async function showWorkflow() {
+  if (!state.projectId) {
+    renderNoProjectState();
+    return;
+  }
   state.view = "workflow";
   setLoading("Refreshing the workflow…");
   await loadProject();
@@ -1453,7 +1503,7 @@ function renderWorkflow() {
     </section>`;
   document.querySelector("#workflow-tasks")?.addEventListener("click", showAvailableTasks);
   document.querySelector("#workflow-combined")?.addEventListener("click", showCombinedResult);
-  document.querySelector("#workflow-join")?.addEventListener("click", showJoin);
+  document.querySelector("#workflow-join")?.addEventListener("click", () => showJoin());
   app.focus();
 }
 
@@ -1476,6 +1526,35 @@ async function resetDemoWithConfirmation() {
     showMessage("Reset complete. Upload an assignment to start a new project.");
   } catch (error) {
     renderError(error.message, resetDemoWithConfirmation);
+  }
+}
+
+async function resetToOriginalState() {
+  if (!window.confirm(
+    "Reset Relay? This clears all assignment data and returns to the original home screen.",
+  )) return;
+  const button = document.querySelector("#reset-demo");
+  button.disabled = true;
+  button.textContent = "Resetting…";
+  try {
+    await apiRequest("/api/reset-all", { method: "POST" });
+    clearCurrentSession();
+    state.assignment = { title: "", deadline: "", assignment_brief: "", rubric_text: "" };
+    state.analysisResult = null;
+    state.files = {
+      assignment: { name: "", status: "", tone: "" },
+      rubric: { name: "", status: "", tone: "" },
+    };
+    chatMessages.innerHTML = `<div class="chat-message assistant">Ask me about this assignment, its tasks, rubric, workflow, submissions, or progress.</div>`;
+    chatPanel.hidden = true;
+    chatLauncher.hidden = true;
+    renderLanding();
+    showMessage("Relay was reset and is ready for a new assignment.");
+  } catch (error) {
+    showMessage(error.message, "error");
+  } finally {
+    button.disabled = false;
+    button.innerHTML = "Reset<br>Demo";
   }
 }
 
@@ -1638,6 +1717,7 @@ async function sendRelayChat(event) {
 }
 
 chatLauncher.addEventListener("click", openRelayChat);
+document.querySelector("#reset-demo").addEventListener("click", resetToOriginalState);
 document.querySelector("#ai-chat-close").addEventListener("click", closeRelayChat);
 document.querySelector("#ai-chat-resize").addEventListener("pointerdown", beginChatResize);
 document.querySelector("#ai-chat-form").addEventListener("submit", sendRelayChat);

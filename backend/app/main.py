@@ -164,6 +164,15 @@ def reset_demo() -> dict[str, object]:
     }
 
 
+@app.post("/api/reset-all")
+def reset_everything() -> dict[str, object]:
+    store.clear_all()
+    return {
+        "reset": True,
+        "message": "All Relay assignments, members, and submissions were cleared.",
+    }
+
+
 @app.get("/api/projects/{project_id}")
 def get_project(project_id: str) -> dict[str, object]:
     try:

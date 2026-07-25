@@ -158,6 +158,22 @@ def test_resetting_demo_preserves_other_assignment_statistics() -> None:
     assert previous["title"] == "Previous Assignment"
 
 
+def test_reset_everything_removes_other_assignments_and_members() -> None:
+    other = create_demo_project().model_copy(deep=True)
+    other.id = "project-to-remove"
+    for task in other.tasks:
+        task.project_id = other.id
+    store.add_project(other)
+    join("Kian")
+
+    response = client.post("/api/reset-all")
+    statistics = client.get("/api/projects").json()
+
+    assert response.status_code == 200
+    assert response.json()["reset"] is True
+    assert statistics == []
+
+
 def test_two_starting_tasks_are_available() -> None:
     response = client.get(f"/api/projects/{PROJECT_ID}/available-tasks")
 

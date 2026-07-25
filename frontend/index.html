@@ -6,11 +6,15 @@
     <meta name="description" content="Relay turns assignment briefs into clear, claimable next actions.">
     <meta name="theme-color" content="#f4f6f0">
     <title>Relay — From assignment brief to next action</title>
-    <link rel="stylesheet" href="/static/style.css">
-    <script src="/static/app.js?v=stage5-home-reset" defer></script>
+    <link rel="stylesheet" href="/static/style.css?v=relay-empty-project">
+    <script src="/static/app.js?v=relay-join-pointer-event-removed" defer></script>
   </head>
   <body>
+    <button id="reset-demo" class="reset-demo" type="button">Reset<br>Demo</button>
     <header id="app-header" class="app-header" hidden>
+      <button class="header-back" id="global-back" type="button" aria-label="Go back">
+        <span aria-hidden="true">←</span> Back
+      </button>
       <a class="header-brand" href="#" id="brand-home" aria-label="Relay home">
         <span class="brand-mark" aria-hidden="true">R</span>
         <span>Relay</span>
