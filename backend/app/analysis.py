@@ -15,6 +15,31 @@ FALLBACK_RUBRIC = [
     ("Solution design and implementation", "Quality of the proposed and implemented solution", 35),
     ("Testing and presentation", "Testing evidence and clear communication", 20),
 ]
+
+
+def generate_fallback_rubric(brief: str) -> list[RubricCriterion]:
+    deliverables = _extract_deliverables(brief)
+    if deliverables:
+        selected = deliverables[:4]
+        base_marks, remainder = divmod(100, len(selected))
+        return [
+            RubricCriterion(
+                id=f"rubric-{_slug(name)}",
+                criterion=f"{name} quality",
+                description=f"Completeness, relevance, and quality of the required {name.casefold()}.",
+                marks=base_marks + (1 if index < remainder else 0),
+            )
+            for index, name in enumerate(selected)
+        ]
+    return [
+        RubricCriterion(
+            id=f"rubric-{_slug(name)}",
+            criterion=name,
+            description=description,
+            marks=marks,
+        )
+        for name, description, marks in FALLBACK_RUBRIC
+    ]
 REQUIREMENT_TERMS = (
     "must", "required", "should", "include", "submit", "demonstrate", "compare",
     "evaluate", "analyse", "analyze", "implement", "build", "test", "present", "document",

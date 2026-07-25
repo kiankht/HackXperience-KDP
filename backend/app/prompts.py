@@ -66,3 +66,16 @@ next step, and provide useful suggested_questions. If a question is mostly outsi
 scope, set in_scope=false, briefly mention only any useful context, then redirect
 to the project. Keep answers concise and actionable.
 """.strip()
+
+RUBRIC_GENERATION_PROMPT = f"""
+You generate a proposed marking rubric from an assignment brief when the lecturer
+did not provide one.
+
+{UNTRUSTED_DOCUMENT_RULES}
+
+Create 3 to 8 assignment-specific criteria whose marks total exactly 100. Cover
+the explicit deliverables and the most important requirements in the brief.
+Descriptions must state observable qualities that a student can check. Do not
+claim this is the lecturer's official rubric. Use unique lowercase IDs beginning
+with "rubric-". Avoid generic criteria when the brief provides specific outputs.
+""".strip()

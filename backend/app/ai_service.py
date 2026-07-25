@@ -8,8 +8,9 @@ from .ai_models import (
     AISubmissionValidation,
     AIWorkflowDefinition,
     AIProjectChatResponse,
+    AIGeneratedRubric,
 )
-from .analysis import analyze_assignment
+from .analysis import analyze_assignment, generate_fallback_rubric
 from .config import Settings
 from .models import (
     AssignmentAnalysisRequest,
@@ -26,6 +27,7 @@ from .prompts import (
     SUBMISSION_VALIDATION_PROMPT,
     WORKFLOW_GENERATION_PROMPT,
     PROJECT_CHAT_PROMPT,
+    RUBRIC_GENERATION_PROMPT,
 )
 from .workflow import ValidationResult, validate_submission
 
@@ -62,7 +64,19 @@ class AIService:
 
     @property
     def configured(self) -> bool:
+        if self.settings.ai_provider == "azure":
+            return bool(
+                self.settings.azure_openai_endpoint
+                and self.settings.azure_openai_api_key
+                and self.settings.azure_openai_deployment
+            )
         return bool(self.settings.openai_api_key)
+
+    @property
+    def model_name(self) -> str:
+        if self.settings.ai_provider == "azure":
+            return self.settings.azure_openai_deployment or ""
+        return self.settings.openai_model
 
     @property
     def real_enabled(self) -> bool:
@@ -77,35 +91,66 @@ class AIService:
             mode = "fallback"
         return {
             "mode": mode,
-            "provider": "openai",
+            "provider": self.settings.ai_provider,
             "configured": self.configured,
-            "model": self.settings.openai_model,
+            "model": self.model_name,
             "fallback_available": True,
         }
 
     def _require_or_fallback(self) -> bool:
         if self.settings.ai_mode == "real" and not self.configured:
             raise AIConfigurationError(
-                "Real AI mode requires OPENAI_API_KEY in the backend environment."
+                f"Real AI mode requires complete {self.settings.ai_provider.title()} "
+                "provider credentials in the backend environment."
             )
         return self.real_enabled
 
     def _openai_client(self) -> OpenAI:
         if self._client is None:
-            self._client = OpenAI(
-                api_key=self.settings.openai_api_key,
-                timeout=self.settings.ai_timeout_seconds,
-                max_retries=0,
-            )
+            client_options = {
+                "api_key": (
+                    self.settings.azure_openai_api_key
+                    if self.settings.ai_provider == "azure"
+                    else self.settings.openai_api_key
+                ),
+                "timeout": self.settings.ai_timeout_seconds,
+                "max_retries": 0,
+            }
+            if self.settings.ai_provider == "azure":
+                azure_base = (self.settings.azure_openai_endpoint or "").rstrip("/")
+                if azure_base.endswith("/openai/v1"):
+                    azure_base += "/"
+                elif azure_base.endswith("/openai"):
+                    azure_base += "/v1/"
+                else:
+                    azure_base += "/openai/v1/"
+                client_options["base_url"] = azure_base
+            self._client = OpenAI(**client_options)
         return self._client
 
-    def _parse(self, *, instructions: str, content: str, schema: type):
+    def _parse(
+        self,
+        *,
+        instructions: str,
+        content: str,
+        schema: type,
+        max_output_tokens: int = 2_000,
+    ):
+        request_options: dict[str, object] = {
+            "model": self.model_name,
+            "instructions": instructions,
+            "input": content,
+            "text_format": schema,
+            "timeout": self.settings.ai_timeout_seconds,
+            "max_output_tokens": max_output_tokens,
+        }
+        if (
+            self.settings.ai_provider == "azure"
+            and self.model_name.casefold().startswith("gpt-5")
+        ):
+            request_options["reasoning"] = {"effort": "minimal"}
         response = self._openai_client().responses.parse(
-            model=self.settings.openai_model,
-            instructions=instructions,
-            input=content,
-            text_format=schema,
-            timeout=self.settings.ai_timeout_seconds,
+            **request_options,
         )
         parsed = response.output_parsed
         if parsed is None:
@@ -129,6 +174,7 @@ class AIService:
                 instructions=ASSIGNMENT_ANALYSIS_PROMPT,
                 content=content,
                 schema=AIAssignmentAnalysis,
+                max_output_tokens=2_500,
             )
         except Exception as error:
             if self.settings.ai_mode == "real":
@@ -153,6 +199,33 @@ class AIService:
                 rubric_character_count=len(payload.rubric_text),
             ),
         ), "ai"
+
+    def generate_rubric(
+        self,
+        *,
+        title: str | None,
+        assignment_brief: str,
+    ) -> tuple[list, str]:
+        if not self._require_or_fallback():
+            return generate_fallback_rubric(assignment_brief), "fallback"
+        content = json.dumps({
+            "title": title,
+            "untrusted_assignment_brief": assignment_brief,
+        }, ensure_ascii=False)
+        try:
+            generated: AIGeneratedRubric = self._parse(
+                instructions=RUBRIC_GENERATION_PROMPT,
+                content=content,
+                schema=AIGeneratedRubric,
+                max_output_tokens=2_000,
+            )
+            return generated.rubric, "ai"
+        except Exception as error:
+            if self.settings.ai_mode == "real":
+                raise AIServiceError(
+                    "Relay could not generate a rubric from this assignment."
+                ) from error
+            return generate_fallback_rubric(assignment_brief), "fallback"
 
     def generate_project(
         self,
@@ -186,6 +259,7 @@ class AIService:
                     instructions=instructions,
                     content=content,
                     schema=AIWorkflowDefinition,
+                    max_output_tokens=6_000,
                 )
             except Exception as error:
                 if self.settings.ai_mode == "real":
@@ -252,6 +326,7 @@ class AIService:
                 instructions=SUBMISSION_VALIDATION_PROMPT,
                 content=payload,
                 schema=AISubmissionValidation,
+                max_output_tokens=1_200,
             )
             return SubmissionCheckResult(validation, "ai")
         except Exception as error:
@@ -416,6 +491,7 @@ class AIService:
                 instructions=PROJECT_CHAT_PROMPT,
                 content=json.dumps(context, ensure_ascii=False),
                 schema=AIProjectChatResponse,
+                max_output_tokens=1_200,
             )
             if not response.in_scope:
                 return refusal, "ai"

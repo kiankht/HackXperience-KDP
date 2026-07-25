@@ -591,6 +591,10 @@ function showAssignmentInput() {
       ${uploadZone("assignment", "Assignment")}
       ${assignmentField("assignment-brief", "Assignment brief", data.assignment_brief, { textarea: true, required: true, max: 30000, rows: 11 })}
       ${uploadZone("rubric", "Marking rubric")}
+      <div class="generate-rubric-row">
+        <div><strong>No marking rubric?</strong><span>Relay can draft one from the assignment brief for you to edit.</span></div>
+        <button class="button secondary" type="button" id="generate-rubric">Generate Rubric</button>
+      </div>
       ${assignmentField("rubric-text", "Marking rubric", data.rubric_text, { textarea: true, required: true, max: 20000, rows: 8 })}
       <p class="privacy-copy">Your assignment content is processed to generate the workflow. Do not upload documents containing passwords, private identification documents, or API keys.</p>
       <p id="assignment-request-error" class="form-error" role="alert"></p>
@@ -614,6 +618,10 @@ function showAssignmentInput() {
   document.querySelectorAll("#assignment-form input, #assignment-form textarea").forEach((field) => field.addEventListener("input", sync));
   document.querySelector("#assignment-form").addEventListener("submit", analyseAssignment);
   document.querySelector("#fill-sample").addEventListener("click", fillSampleAssignment);
+  document.querySelector("#generate-rubric").addEventListener("click", async () => {
+    sync();
+    await generateRubricFromAssignment();
+  });
   document.querySelector("#assignment-back").addEventListener("click", () => {
     state.newAssignmentMemberName = null;
     renderLanding();
@@ -621,6 +629,43 @@ function showAssignmentInput() {
   bindUploadZone("assignment");
   bindUploadZone("rubric");
   document.querySelector("#assignment-title-input").focus();
+}
+
+async function generateRubricFromAssignment() {
+  const button = document.querySelector("#generate-rubric");
+  const error = document.querySelector("#assignment-request-error");
+  const brief = state.assignment.assignment_brief.trim();
+  if (brief.length < 80) {
+    error.textContent = "Upload or paste at least 80 characters of the assignment brief first.";
+    document.querySelector("#assignment-brief").focus();
+    return;
+  }
+  if (state.assignment.rubric_text.trim() && !window.confirm(
+    "Replace the current rubric text with a Relay-generated draft?",
+  )) return;
+  error.textContent = "";
+  button.disabled = true;
+  button.textContent = "Generating...";
+  try {
+    const result = await apiRequest("/api/assignments/generate-rubric", {
+      method: "POST",
+      body: JSON.stringify({
+        title: state.assignment.title.trim() || null,
+        assignment_brief: brief,
+      }),
+      timeoutMs: 180000,
+    });
+    state.assignment.rubric_text = result.rubric.map((criterion) =>
+      `${criterion.criterion} — ${criterion.marks} marks\n${criterion.description}`
+    ).join("\n\n");
+    showAssignmentInput();
+    showMessage(`Rubric draft generated with ${result.generation_mode === "ai" ? "live AI" : "Relay rules"}. Review it before analysing.`);
+    document.querySelector("#rubric-text").focus();
+  } catch (requestError) {
+    button.disabled = false;
+    button.textContent = "Generate Rubric";
+    error.textContent = requestError.message;
+  }
 }
 
 function bindUploadZone(type) {
@@ -746,6 +791,7 @@ async function analyseAssignment(event) {
     state.analysisResult = await apiRequest("/api/assignments/analyze", {
       method: "POST",
       body: JSON.stringify(result.data),
+      timeoutMs: 180000,
     });
     if (!state.analysisResult?.rubric?.length || !state.analysisResult?.deliverables?.length) {
       throw new Error("Relay received an incomplete analysis response.");
@@ -871,6 +917,7 @@ async function buildCustomProject(event) {
         original_assignment_brief: state.assignment.assignment_brief.trim(),
         original_rubric_text: state.assignment.rubric_text.trim(),
       }),
+      timeoutMs: 180000,
     });
     state.projectId = created.project_id;
     state.workflowWarnings = created.workflow_warnings || [];

@@ -146,6 +146,13 @@ class ProjectChatRequest(BaseModel):
         return value.strip()
 
 
+class RubricGenerationRequest(BaseModel):
+    title: str | None = Field(default=None, max_length=PROJECT_TITLE_MAX_LENGTH)
+    assignment_brief: str = Field(
+        min_length=ASSIGNMENT_BRIEF_MIN_LENGTH,
+        max_length=ASSIGNMENT_BRIEF_MAX_LENGTH,
+    )
+
 class AssignmentAnalysisRequest(BaseModel):
     title: str | None = Field(default=None, max_length=PROJECT_TITLE_MAX_LENGTH)
     deadline: str | None = None

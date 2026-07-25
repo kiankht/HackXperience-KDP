@@ -383,6 +383,9 @@ dd { margin: 0; font-size: .86rem; font-weight: 700; line-height: 1.45; }
 .assignment-switch-card.current { border: 2px solid var(--accent-strong); }
 .assignment-switch-card h3 { margin: 9px 0 4px; }
 .assignment-switch-card p { margin: 0; }
+.generate-rubric-row { display: flex; justify-content: space-between; align-items: center; gap: 18px; margin: -4px 0 18px; padding: 15px; border: 1px dashed var(--accent-strong); border-radius: 12px; background: #fbffe9; }
+.generate-rubric-row > div { display: grid; gap: 3px; }
+.generate-rubric-row span { color: var(--muted); font-size: .84rem; }
 
 .global-message {
   position: fixed; z-index: 50; right: 22px; bottom: 22px; max-width: min(380px, calc(100vw - 44px));
@@ -475,6 +478,7 @@ dd { margin: 0; font-size: .86rem; font-weight: 700; line-height: 1.45; }
   .stats-overview, .stats-card dl { grid-template-columns: 1fr; }
   .assignment-menu-actions { grid-template-columns: 1fr; }
   .assignment-switch-card { align-items: stretch; flex-direction: column; }
+  .generate-rubric-row { align-items: stretch; flex-direction: column; }
   .two-column-fields, .path-explanation { grid-template-columns: 1fr; }
   .form-actions .button, .form-actions .text-button { width: 100%; }
   .review-section, .assignment-form { padding: 19px; }

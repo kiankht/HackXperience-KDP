@@ -67,3 +67,13 @@ class AIProjectChatResponse(BaseModel):
     in_scope: bool
     answer: str
     suggested_questions: list[str] = Field(default_factory=list, max_length=4)
+
+
+class AIGeneratedRubric(BaseModel):
+    rubric: list[RubricCriterion] = Field(min_length=3, max_length=8)
+
+    @model_validator(mode="after")
+    def require_100_marks(self) -> "AIGeneratedRubric":
+        if sum(item.marks for item in self.rubric) != 100:
+            raise ValueError("Generated rubric marks must total 100.")
+        return self

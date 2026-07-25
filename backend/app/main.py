@@ -10,6 +10,7 @@ from .models import (
     ConfirmedProjectRequest,
     JoinProjectRequest,
     ProjectChatRequest,
+    RubricGenerationRequest,
     SubmitTaskRequest,
     TaskStatus,
 )
@@ -117,6 +118,24 @@ def analyse_assignment(payload: AssignmentAnalysisRequest) -> dict[str, object]:
     return {
         **result.model_dump(mode="json"),
         "analysis_mode": mode,
+    }
+
+
+@app.post("/api/assignments/generate-rubric")
+def generate_assignment_rubric(
+    payload: RubricGenerationRequest,
+) -> dict[str, object]:
+    try:
+        rubric, mode = ai_service.generate_rubric(
+            title=payload.title,
+            assignment_brief=payload.assignment_brief,
+        )
+    except (AIConfigurationError, AIServiceError) as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return {
+        "rubric": [item.model_dump(mode="json") for item in rubric],
+        "generation_mode": mode,
+        "disclaimer": "This is a Relay-generated draft, not an official lecturer rubric.",
     }
 
 

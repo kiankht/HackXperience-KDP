@@ -117,6 +117,24 @@ def test_missing_deadline_produces_warning() -> None:
     assert "No explicit deadline was found." in result["extraction_warnings"]
 
 
+def test_rubric_can_be_generated_from_assignment_without_rubric_file() -> None:
+    source = sample()
+    response = client.post(
+        "/api/assignments/generate-rubric",
+        json={
+            "title": source["title"],
+            "assignment_brief": source["assignment_brief"],
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["generation_mode"] == "fallback"
+    assert 3 <= len(result["rubric"]) <= 8
+    assert sum(item["marks"] for item in result["rubric"]) == 100
+    assert "not an official lecturer rubric" in result["disclaimer"]
+
+
 def test_deliverables_and_requirements_are_clean_and_deduplicated() -> None:
     payload = sample()
     payload["assignment_brief"] += (
