@@ -22,6 +22,7 @@ const state = {
   combinedResult: null,
   projectStatistics: [],
   newAssignmentMemberName: null,
+  assignmentReturnView: "landing",
   chatHistory: [],
   chatProjectId: null,
   lastClickedSuggestion: null,
@@ -372,14 +373,17 @@ function renderNoProjectState() {
       </div>
     </section>`;
   document.querySelector("#no-project-primary").addEventListener(
-    "click", () => hasUnjoinedProject ? showJoin() : startNewAssignment(),
+    "click", () => hasUnjoinedProject ? showJoin() : startNewAssignment("no-project"),
   );
   document.querySelector("#no-project-assignments").addEventListener("click", showAssignments);
   document.querySelector("#no-project-home").addEventListener("click", renderLanding);
   app.focus();
 }
 
-function startNewAssignment() {
+function startNewAssignment(returnView = state.view) {
+  state.assignmentReturnView = ["landing", "assignments", "no-project"].includes(returnView)
+    ? returnView
+    : "landing";
   state.newAssignmentMemberName = state.memberName;
   state.assignment = { title: "", deadline: "", assignment_brief: "", rubric_text: "" };
   state.analysisResult = null;
@@ -434,7 +438,10 @@ function renderAssignments() {
         </div>
       </section>
     </section>`;
-  document.querySelector("#menu-new-assignment").addEventListener("click", startNewAssignment);
+  document.querySelector("#menu-new-assignment").addEventListener(
+    "click",
+    () => startNewAssignment("assignments"),
+  );
   document.querySelector("#menu-start-demo").addEventListener("click", startDemo);
   document.querySelectorAll("[data-switch-assignment]").forEach((button) => {
     button.addEventListener("click", () => switchAssignment(button.dataset.switchAssignment));
@@ -511,7 +518,7 @@ function renderLanding() {
         <div><span>3</span><strong>Choose</strong><small>Members claim ready tasks</small></div>
       </div>
     </section>`;
-  document.querySelector("#create-assignment").addEventListener("click", () => showAssignmentInput());
+  document.querySelector("#create-assignment").addEventListener("click", () => startNewAssignment("landing"));
   document.querySelector("#continue-project")?.addEventListener("click", continueSavedProject);
   document.querySelector("#start-demo").addEventListener("click", startDemo);
   document.querySelector("#check-connection").addEventListener("click", checkConnection);
@@ -643,11 +650,23 @@ function showAssignmentInput() {
   });
   document.querySelector("#assignment-back").addEventListener("click", () => {
     state.newAssignmentMemberName = null;
-    renderLanding();
+    leaveAssignmentCreation();
   });
   bindUploadZone("assignment");
   bindUploadZone("rubric");
   document.querySelector("#assignment-title-input").focus();
+}
+
+function leaveAssignmentCreation() {
+  const returnView = state.assignmentReturnView;
+  state.assignmentReturnView = "landing";
+  if (returnView === "assignments") {
+    showAssignments().catch((error) => renderError(error.message, showAssignments));
+  } else if (returnView === "no-project") {
+    renderNoProjectState();
+  } else {
+    renderLanding();
+  }
 }
 
 async function generateRubricFromAssignment() {
