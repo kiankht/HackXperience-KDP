@@ -175,7 +175,26 @@ async function apiRequest(path, options = {}) {
       try {
         payload = JSON.parse(text);
       } catch {
-        throw new Error("Relay received an unexpected response from the backend.");
+        const status = response.status;
+        const hostedWithoutBackend = window.location.hostname.endsWith("github.io");
+        if (hostedWithoutBackend || (response.ok && text.trimStart().startsWith("<"))) {
+          throw new Error(
+            "This link only contains Relay’s interface, not its backend. Open the Render website link instead of the GitHub Pages link.",
+          );
+        }
+        if ([502, 503, 504].includes(status)) {
+          throw new Error(
+            "Relay’s hosted server is waking up or restarting. Wait about one minute, refresh the page, and try again.",
+          );
+        }
+        if (status === 404) {
+          throw new Error(
+            "This Relay deployment is out of date. Redeploy the latest GitHub commit on Render, then refresh.",
+          );
+        }
+        throw new Error(
+          `Relay’s hosted backend returned an unreadable response (HTTP ${status}). Refresh once; if it continues, check the Render service logs.`,
+        );
       }
     }
     if (!response.ok) {

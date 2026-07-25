@@ -468,6 +468,25 @@ def submit_task(task_id: str, payload: SubmitTaskRequest) -> dict[str, object]:
     }
 
 
+def frontend_response() -> FileResponse:
+    return FileResponse(
+        FRONTEND_DIR / "index.html",
+        headers={
+            "Cache-Control": "no-store, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
+
+
 @app.get("/", include_in_schema=False)
 def frontend() -> FileResponse:
-    return FileResponse(FRONTEND_DIR / "index.html")
+    return frontend_response()
+
+
+@app.get("/{browser_path:path}", include_in_schema=False)
+def frontend_browser_route(browser_path: str) -> FileResponse:
+    # Refreshed browser routes should reopen Relay, while invalid API calls
+    # must remain genuine API errors.
+    if browser_path == "api" or browser_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="API endpoint not found.")
+    return frontend_response()
